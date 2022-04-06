@@ -5,6 +5,58 @@ date: "4/5/2022"
 output: html_document
 ---
 
+
+-----------CHANGES-----------
+
+Proposal: 
+Our team looks to design a project to assess the impact of government provided social services on women in the United States. Focusing on the state of California, we predict that the sheer size of the state population will provide us with adequate data to complete a difference-in-differences methodology in addition to evaluating urban and rural social service impact. Specifically, the team plans to assess WIC, a food-nutrition assistant program and its success in California. 
+
+Motivating Question: 
+The motivating question for this data analysis project is: why are social services more or less accessible to women? A few variables that the team plans to incorporate into our analysis are: 
+(1)	CA state spending on social services  
+(2)	Rural vs Urban Social Services impact 
+
+These two variables induce two assessments that we plan to evaluate using techniques learned in class. First, we plan to see how much states are spending on social services for women to predict on average in a rural or urban area of the state how much money will be allocated per women on food nutritional assistance programs. Second, this will inform our geospatial portion of our model, which will map how far away women are in rural areas from social services. Third, both food nutritional services have data on redeemability.
+
+ In both rural and urban areas we could compare baseline and endline data sets to determine the effectiveness of this program on women and children. In juxtaposition, we could look at factors of spending and geographic location for impact in redeemability. For example, if there is a low % we map that back to the proximity of the neighborhood to the closest WIC/ social services office. Our overarching goal from this would be to provide a solution through understanding parameters and restriction on women and access to social services. From this project, we hope to say that on average, a women will not travel over X amount of miles to redeem food nutrional assistance benefits. 
+
+
+Data Sources: 
+https://data.ca.gov/dataset/women-infants-and-children-wic-authorized-vendors1 
+https://www.cnbc.com/2019/04/10/working-women-and-the-child-care-equation-no-one-has-it-figured-out.html
+https://data.ca.gov/dataset/california-women-infants-and-children-program-redemption-by-county/resource/f2c0343b-796c-45c9-ae3c-1b7ef12c324e
+
+https://data.ca.gov/dataset/percentage-of-women-who-have-received-preventative-services-lghc-indicator
+
+
+
+https://www.calwic.org/storage/documents/reports/stratplan_brochure.pdf
+https://www.cdss.ca.gov/inforesources/calworks
+https://www.census.gov/library/stories/state-by-state/california-population-change-between-census-decade.html
+https://www.calwic.org/storage/documents/reports/stratplan_brochure.pdf 
+
+
+Approach: 
+The team plans to use a few approaches to accomplish our goal of (1) understanding the marginal impact of WIC on women in California between control and treatment group (2) understanding how proximity to social services offices play a role in accessing and using benefits. We plan to use geospatial operations and modeling to predict how much WIC money would be spent on women in different parts of the state of CA and to predict whether or not benefits are redeemable dependent on proximity. 
+
+Anticipated Hurdles: 
+•	Prospect of merging data and assessing full impact of WIC on CA
+•	Difficulty assessing and separating causality and predictive modeling purposes and tactics 
+•	Difficulty in a one state comparison
+•	Difficulty in analyzing control vs treatment group for WIC , what if the impact of WIC is minimal 
+•	Gathering and parsing out data for rural and urban areas in CA 
+
+Building Upon Past Projects: 
+https://reenvisioning-rural-america.urban.org/
+
+https://fullerproject.org/story/child-care-crisis-black-mothers-covid-pandemic-economy/ 
+![image](https://user-images.githubusercontent.com/99369244/162017426-da60d6ff-89c6-4520-b2ae-9954ed3a7ed2.png)
+
+
+
+
+---------CHANGES END--------------------------
+
 2. Team proposal: Based on step one, students will form teams of 3-4 people. All teams need to submit
 a project proposal on Canvas no later than Wednesday, April 6th at 11:59PM. Only one proposal
 is needed per team. The proposal should be 2-3 paragraphs and include the names on the team, a
