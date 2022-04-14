@@ -1,0 +1,101 @@
+---
+title: "Final Project"
+author: "Hannah Hill"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## SNAP Retailer Locations
+
+```{r loading in data}
+library(tidycensus)
+library(tidyverse)
+library(ggplot2)
+library(dplyr)
+library(janitor)
+library(lubridate)
+library(sf)
+library(stringr)
+retailers <- read_csv("SNAP_Store_Locations.csv")
+retailers <- retailers %>%
+  janitor::clean_names() %>%
+  filter(state == "CA") %>%
+  mutate(COUNTY = toupper(county)) %>%
+  select(-county)
+  
+
+#### retailers data
+ca_retails <- retailers %>%
+  group_by(COUNTY) %>%
+  summarize(N_RETAIL = n()) %>%
+  ungroup()
+
+```
+
+```{r}
+library(tigris)
+ca_counties_raw <- tigris::counties(
+  state = "CA",
+  cb = TRUE,
+  resolution = "500k",
+  year = 2020,
+  class = "sf")
+
+#getting geo outline of CA by county
+ca_counties_raw %>%
+  ggplot() +
+  geom_sf() +
+  theme_void()
+```
+
+```{r}
+ca_counties <- ca_counties_raw %>%
+  dplyr::transmute(
+    GEOID,
+    MAP_NAME = NAME,
+    COUNTY = toupper(NAME)
+  )
+
+#upload population
+county_pop_url <- "https://www2.census.gov/programs-surveys/popest/datasets/2010-2019/counties/totals/co-est2019-alldata.csv"
+county_pop_raw <- read_csv(url(county_pop_url))
+
+ca_pop <- county_pop_raw %>%
+  filter(SUMLEV == "050") %>%
+  filter(STNAME == "California") %>%
+  select(
+    COUNTY = CTYNAME,
+    POPESTIMATE2019) %>%
+  mutate(COUNTY = toupper(COUNTY),
+         COUNTY = gsub("(.*)( COUNTY)", "\\1", COUNTY))
+
+combined_ca_data <- left_join(ca_retails, ca_pop, by = "COUNTY") %>%
+  mutate(retailers_per_100k = N_RETAIL / (POPESTIMATE2019/100000))
+
+library(tigris)
+ca_geospatial_data <- geo_join(
+  spatial_data = ca_counties,
+  data_frame = combined_ca_data,
+  by_sp = "COUNTY",
+  by_df = "COUNTY",
+  how = "left")
+
+ggplot(ca_geospatial_data, aes(fill = retailers_per_100k)) +
+  geom_sf() +
+  scale_fill_viridis_c() +
+  theme_void()
+```
+
+```{r}
+#use ca_counties for geospatial
+# next idea: show facet wrap of 1990-2020 by 5 years (1990 1995 2000 2005 2010 2015 2010) for counties? or just line plots? hard with 58 counties.
+```
+
+
+```{r}
+#funding for each county, with $$ allocated per individual
+```
