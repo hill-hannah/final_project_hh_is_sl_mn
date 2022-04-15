@@ -97,5 +97,106 @@ ggplot(ca_geospatial_data, aes(fill = retailers_per_100k)) +
 
 
 ```{r}
-#funding for each county, with $$ allocated per individual
+calfresh <- read_csv("calfresh.csv")
+tidy_calfresh <- calfresh %>%
+  janitor::clean_names() %>%
+  rename(COUNTY = county) %>%
+  mutate(COUNTY = toupper(COUNTY))
+
+
+join_calfresh <- tidy_calfresh %>%
+  select(COUNTY, year, elderly, adults, children, esl, total_population_cy, total_elderly_60plus_cy, total_children_under_18_cy, total_esl_over_age_5_cy) %>%
+  na.omit()
+
+join_calfresh <- join_calfresh %>%
+  mutate(rate_elder = elderly/total_elderly_60plus_cy) %>%
+  mutate(rate_child = children/total_children_under_18_cy) %>%
+  mutate(rate_adult = adults/total_population_cy)
+
+calfresh_map <- geo_join(
+  spatial_data = ca_counties,
+  data_frame = join_calfresh,
+  by_sp = "COUNTY",
+  by_df = "COUNTY",
+  how = "inner")
+
+map_child <- ggplot(calfresh_map, aes(fill = rate_child)) +
+  geom_sf() +
+  scale_fill_viridis_c() +
+  theme_void()
+
+map_adult <- ggplot(calfresh_map, aes(fill = rate_adult)) +
+  geom_sf() +
+  scale_fill_viridis_c() +
+  theme_void()
+
+map_elder <- ggplot(calfresh_map, aes(fill = rate_elder)) +
+  geom_sf() +
+  scale_fill_viridis_c() +
+  theme_void()
+map_child
+map_adult
+map_elder
+```
+
+```{r}
+calfresh_map %>%
+  ggplot(mapping = aes(fill = rate_child)) +
+  geom_sf() +
+  scale_fill_viridis_c() +
+  facet_wrap(~year) +
+  labs(title = "Child SNAP Participation Rate") +
+  theme(axis.text.x = element_blank(),
+        axis.ticks.x = element_blank())
+
+calfresh_map %>%
+  ggplot(mapping = aes(fill = rate_elder)) +
+  geom_sf() +
+  scale_fill_viridis_c() +
+  facet_wrap(~year) +
+  labs(title = "Elderly SNAP Participation Rate") +
+  theme(axis.text.x = element_blank(),
+        axis.ticks.x = element_blank())
+
+calfresh_map %>%
+  ggplot(mapping = aes(fill = rate_adult)) +
+  geom_sf() +
+  scale_fill_viridis_c() +
+  facet_wrap(~year) +
+  labs(title = "Adult SNAP Participation Rate") +
+  theme(axis.text.x = element_blank(),
+        axis.ticks.x = element_blank())
+```
+
+```{r}
+snap_demos <- read_csv("particp_demog_counties.csv")
+tidy_demos <- snap_demos %>%
+  clean_names() %>%
+  rename(year = fileyear) %>%
+  mutate(COUNTY = toupper(county)) %>%
+  select(year, COUNTY, person, cases, female, male, black, hispanic, asian_pi, native_american_other_unknown) %>%
+  filter(COUNTY != "COUNTY TOTAL")
+## issue with this dataset is that it does not include # of cases by those demographics. it's only showing demographics for the county and how many cases there are.
+
+tidy_demos <- tidy_demos %>%
+    mutate(rate = cases/person)
+
+snap_map <- geo_join(
+  spatial_data = ca_counties,
+  data_frame = tidy_demos,
+  by_sp = "COUNTY",
+  by_df = "COUNTY",
+  how = "inner")
+
+snap_map %>%
+  ggplot(mapping = aes(fill = rate)) +
+  geom_sf() +
+  scale_fill_viridis_c() +
+  facet_wrap(~year) +
+  labs(title = "SNAP Participation Rate") +
+  theme(axis.text.x = element_blank(),
+        axis.ticks.x = element_blank())
+#This overall rate graph shows that there is a large percentage of eligible folks across California who do not participate in SNAP despite being eligible for services. The ideal rate, of course, is 100% providing service to all who are eligible. This begs the question: what can California do better to increase the participation rate? Who is not being reached?
+
+# need to find data that provides participation rate of women and of women who are parents to one or more children. also, could compel us to look at cost of school lunches across state possibly?
 ```
