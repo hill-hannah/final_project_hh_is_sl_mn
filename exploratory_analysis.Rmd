@@ -200,3 +200,33 @@ snap_map %>%
 
 # need to find data that provides participation rate of women and of women who are parents to one or more children. also, could compel us to look at cost of school lunches across state possibly?
 ```
+# WIC Retailers
+```{r loading in WIC data}
+wic_vendors <- read_csv("vendor.csv")
+wic_tidy <- wic_vendors %>%
+  mutate(COUNTY = toupper(COUNTY))
+
+#### retailers data
+wic_retailers <- wic_tidy %>%
+  group_by(COUNTY) %>%
+  summarize(N_RETAIL = n()) %>%
+  ungroup()
+
+wic_join <- left_join(wic_retailers, ca_pop, by = "COUNTY") %>%
+  mutate(retailers_per_100k = N_RETAIL / (POPESTIMATE2019/100000))
+
+library(tigris)
+wic_geo_data <- geo_join(
+  spatial_data = ca_counties,
+  data_frame = wic_join,
+  by_sp = "COUNTY",
+  by_df = "COUNTY",
+  how = "left")
+
+ggplot(wic_geo_data, aes(fill = retailers_per_100k)) +
+  geom_sf() +
+  scale_fill_viridis_c() +
+  theme_void()
+
+
+```
