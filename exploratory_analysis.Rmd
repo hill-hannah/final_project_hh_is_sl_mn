@@ -86,7 +86,7 @@ ca_geospatial_data <- geo_join(
 
 ggplot(ca_geospatial_data, aes(fill = retailers_per_100k)) +
   geom_sf() +
-  scale_fill_viridis_c() +
+  #scale_fill_viridis_c() +
   theme_void()
 ```
 
@@ -225,8 +225,43 @@ wic_geo_data <- geo_join(
 
 ggplot(wic_geo_data, aes(fill = retailers_per_100k)) +
   geom_sf() +
-  scale_fill_viridis_c() +
+  #scale_fill_viridis_c() +
+  labs(
+    title = "WIC Retailers per 100k"
+  )
   theme_void()
+```
 
 
+```{r cleaning WIC}
+wic_redemp_county <- read_csv("wic_county.csv") %>%
+  clean_names()
+wic_redemp_particp <- read_csv("wic_participant.csv") %>%
+  clean_names() %>%
+  separate(year_month, c("year", "month")) %>%
+  rename(COUNTY = vendor_location)
+  
+wic_redemp_particp %>%
+  ggplot() +
+  geom_col(mapping = aes(participant_category, average_cost, fill = participant_category)) +
+  facet_wrap(~year) +
+  labs(
+    title = "Average Cost by WIC Participant",
+    x = "Type of Participant",
+    y = "Average Cost per Participant (in $)"
+  ) +
+  theme(axis.text.x = element_blank(),
+        axis.ticks.x = element_blank(),
+        axis.text.y = element_blank(),
+        axis.ticks.y = element_blank())
+
+
+calfresh_map %>%
+  ggplot(mapping = aes(fill = rate_adult)) +
+  geom_sf() +
+  scale_fill_viridis_c() +
+  facet_wrap(~year) +
+  labs(title = "Adult SNAP Participation Rate") +
+  theme(axis.text.x = element_blank(),
+        axis.ticks.x = element_blank())
 ```
