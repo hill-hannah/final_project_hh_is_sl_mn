@@ -1,0 +1,209 @@
+library(tidycensus)
+library(tidyverse)
+library(ggplot2)
+library(dplyr)
+library(janitor)
+library(lubridate)
+library(sf)
+library(stringr)
+
+
+retailers <- read_csv("/Users/imanisherrill/Desktop/datascience/project/SNAP_Store_Locations.csv")
+retailers <- retailers %>%
+  janitor::clean_names() %>%
+  filter(state == "CA") %>%
+  mutate(COUNTY = toupper(county)) %>%
+  select(-county)
+
+retailers <- read_csv("/Users/imanisherrill/Desktop/datascience/project/SNAP_Store_Locations.csv")
+retailers <- retailers %>%
+  janitor::clean_names() %>%
+  filter(state == "CA") %>%
+  mutate(COUNTY = toupper(county)) %>%
+  select(-county, -address_line_2)
+
+view(retailers)
+
+
+```
+
+
+
+```{r} 
+
+##NEW FUCKING CODE
+
+
+
+
+urban <- c("LOS ANGELES",  "ORANGE", "SAN FRANCISCO", "SAN MATEO", "ALAMEDA", "CONTRA COSTA", "MARIN", "RIVERSIDE",
+"SACRAMENTO", "SAN BERNARDINO", "SAN DIEGO", "SAN JOAQUIN", "SANTA CLARA", "VENTURA", "FRESNO")
+
+
+retailers <- retailers %>% 
+  mutate(urban = if_else(COUNTY %in% urban, 1, 0)) 
+
+
+rural <-c("ALPINE", "AMADOR", "BUTTE", "CALAVERAS", "COLUSA", "DEL NORTE", "EL DORADO", "GLENN",
+"HUMBOLDT", "IMPERIAL", "INYO", "LAKE", "LASSEN", "MADERA", "MARIPOSA", "MENDOCINO", "MERCED", "MODOC",
+"MONO", "MONTEREY", "NAPA", "NEVADA", "PLACER", "PLUMAS", "SAN BENITO", "SAN LUIS OBISPO",
+"SANTA BARBARA", "SHASTA", "SIERRA", "SISKIYOU", "SOLANO", "SONOMA", "SUTTER", "TEHAMA", "TRINITY",
+"TULARE", "TUOLUMNE", "YOLO", "YUBA", "STANISLAUS", "KERN", "KINGS", "SANTA CRUZ")
+
+retailers <- retailers %>%
+  mutate(rural= if_else(COUNTY %in% rural, 1, 0))
+
+view(retailers)
+
+```
+
+
+```{r}
+
+library(tidymodels)
+library(vip)
+library(patchwork)
+library(rsample) 
+library(parsnip)
+library(recipes)
+library(workflows)
+library(tune)
+library(yardstick)
+library (kknn)
+library(knitr)
+library(rpart.plot)
+library(rsample)
+
+set.seed(123456)
+retailers_split <- initial_split(data = retailers, prop = 0.8)
+
+retailers_train <- training(x = retailers_split)
+retailers_test <- testing(x = retailers_split)
+
+retailers_train %>% 
+  group_by(urban) %>%
+  summarize(count= n()) %>%
+  ungroup()
+
+```
+
+predictedlocality <- function (testurban, testrural) {
+ retailers_test <<-  retailers_test %>%
+    mutate(predictedlocality = if_else(urban == testurban,testrural))
+}
+
+predictedlocality ("1", "0") 
+```
+
+
+
+
+```{r}
+retailers_model <- function(y, yhat) {
+accuracy <- sum(y==yhat)/length(y)
+confusion_matrix <- table(yhat, y)
+return(list(accuracy = accuracy,
+confusion_matrix = confusion_matrix))
+}
+
+
+predictedlocality("urban", "rural") 
+```
+
+
+cart_recipe <- 
+  recipe(formula = urban ~., data = retailers_train)
+
+cart_model <- 
+  decision_tree () %>% 
+  set_engine(engine = "rpart" ) %>% 
+  set_mode (mode = "classification")
+
+cart_workflow <- workflow() %>%  
+  add_recipe (cart_recipe) %>% 
+  add_model(cart_model)
+
+cart_fit <- cart_workflow %>%  
+  fit(data = retailers_train) 
+rpart.plot :: rpart.plot (x = cart_fit$fit$fit$fit)
+
+
+predictions <- bind_cols(
+  retailers_test,
+  predict(object = cart_fit, new_data = retailers_test),
+  predict(object = cart_fit, new_data = retailers_test, type = "prob")
+)
+select(predictions, urban, starts_with(".pred"))
+
+
+conf_mat(data=predictions, 
+         truth = color, 
+         estimate = .pred_class)
+
+```{r}
+
+
+predictions <- bind_cols(
+  retailers_test,
+  predict(object = cart1_fit, new_data = retailers_test),
+  predict(object = cart1_fit, new_data = retailers_test, type = "prob"))
+
+select(predictions, urban, starts_with(".pred"))
+
+conf_mat(data = retailers,
+         truth = urban,
+         estimate = .pred_class)
+
+# calculate the precision and recall/sensitivity using library(tidymodels)
+precision(data = retailers,
+          truth = urban,
+          estimate = .pred_class)
+
+#sensitivity
+recall(data = retailers,
+       truth = urban,
+       estimate = .pred_class)
+
+#accuracy 
+accuracy(data = retailers,
+         truth = urban,
+         estimate = .pred_class)
+```
+
+```{r}
+set.seed(123456)
+folds <- vfold_cv(data = retailers_train, v = 10, repeats = 1)
+folds
+
+
+library(parsnip)
+library(recipes)
+
+retailers_recipe <-
+  recipe(formula = urban ~ ., data = retailers_train) %>%
+  step_dummy(all_nominal(), -all_outcomes()) %>%
+  step_center(all_predictors()) %>%
+  step_normalize(all_predictors())
+
+```
+
+```{r}
+
+lm_mod<- linear_reg () %>% 
+  set_engine(engine = "lm")
+  
+lm_wf <- workflow() %>%
+  add_recipe(retailers_recipe) %>%
+  add_model(spec = lm_mod)
+
+lm_cv <- lm_wf %>%
+  fit_resamples(resamples = folds)
+
+lm_cv <- lm_wf %>% 
+  fit_resamples(resamples = folds, metrics = metric_set(rmse,mae))
+
+
+collect_metrics (lm_cv, summarize = TRUE)
+```
+
+
