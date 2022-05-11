@@ -26,11 +26,6 @@ retailers <- retailers %>%
   mutate(COUNTY = toupper(county)) %>%
   select(-county, -address_line_2)
 
-ca_retails <- retailers %>%
-  group_by(COUNTY) %>%
-  summarize(N_RETAIL = n()) %>%
-  ungroup()
-
 urban <- c("LOS ANGELES",  "ORANGE", "SAN FRANCISCO", "SAN MATEO", "ALAMEDA", "CONTRA COSTA", "MARIN", "RIVERSIDE", 
 "SACRAMENTO", "SAN BERNARDINO", "SAN DIEGO", "SAN JOAQUIN", "SANTA CLARA", "VENTURA", "FRESNO")
 
@@ -48,171 +43,102 @@ retailers <- retailers %>%
 
 ```
 
-# Decision Tree for Rural/Urban Stores
-```{r, warning=FALSE}
+# Data Loading and Cleaning - WIC Vendors
+```{r loading in WIC data}
+wic_vendors <- read_csv("vendor.csv")
+wic_tidy <- wic_vendors %>%
+  mutate(COUNTY = toupper(COUNTY))
 
-library(tidymodels)
-library(parsnip)
-library(rpart)
+#### retailers data
+wic_retailers <- wic_tidy %>%
+  group_by(COUNTY) %>%
+  summarize(N_RETAIL = n()) %>%
+  ungroup()
+wic_join <- left_join(wic_retailers, ca_pop, by = "COUNTY") %>%
+  mutate(retailers_per_100k = N_RETAIL / (POPESTIMATE2019/100000))
+library(tigris)
+wic_geo_data <- geo_join(
+  spatial_data = ca_counties,
+  data_frame = wic_join,
+  by_sp = "COUNTY",
+  by_df = "COUNTY",
+  how = "left")
+ggplot(wic_geo_data, aes(fill = retailers_per_100k)) +
+  geom_sf() +
+  #scale_fill_viridis_c() +
+  labs(
+    title = "WIC Retailers per 100k"
+  )
+  theme_void()
+  
+  
 
-#split data
-set.seed(20201020)
-retailers_split <- initial_split(data = retailers, prop = 0.75)
-retailers_train <- training(x = retailers_split)
-retailers_test <- testing(x = retailers_split)
-
-#create recipe
-ret_rec <- recipe(formula=COUNTY ~ ., data = retailers_train)
-
-#create  model
-ret_mod <-
-  decision_tree() %>%
-  set_engine(engine = "rpart") %>%
-  set_mode(mode = "classification")
-
-#create workflow
-ret_wf <- workflow() %>%
-add_recipe(ret_rec) %>%
-add_model(ret_mod)
-
-#fit cart model
-ret_fit <- ret_wf %>%
-fit(data = retailers_train)
-rpart.plot::rpart.plot(x = ret_fit$fit$fit$fit)
-
-predictions <- bind_cols(
-retailers_test,
-predict(object = ret_fit, new_data = retailers_test),
-predict(object = ret_fit, new_data = retailers_test, type = "prob")
-)
-select(predictions, COUNTY, starts_with(".pred"))
-
-conf_mat(data = predictions,
-truth = COUNTY,
-estimate = .pred_class)
+wic <- wic %>%
+janitor::clean_names()
+wic$statewide_infant_formula_rebate
+wic = subset(wic, select = -c(number_of_food_instruments_redeemed,dollar_amount_redeemed_for_food_instruments, number_of_wic_card_transactions_processed, dollar_amount_reimbursed_for_wic_card_transactions,average_cost_adjusted, total_cost_adjusted,statewide_infant_formula_rebate) )
 
 ```
 
-# Text Analysis - SNAP Store Locations
-```{r, warning=FALSE}
+# EDA
+```{r EDA WIC}
+wic_redemp_county <- read_csv("wic_county.csv") %>%
+  clean_names()
 
-library(tidytext)
-library(igraph)
-library(ggraph)
-
-retailers %>% filter(!is.na(store_name))
-#creating biagram
-bigram_snap <- retailers %>%
-  unnest_tokens(bigram, store_name, token = "ngrams", n = 2)
-#separating the bigram into two columns
-bigrams_separated <- bigram_snap %>%
-  separate(bigram, c("word1", "word2"), sep = " ")
-#filtering out rows without stopwords
-bigrams_filtered <- bigrams_separated %>%
-  filter(!word1 %in% stop_words$word) %>%
-  filter(!word2 %in% stop_words$word)
-#counting number of appearances of each bigram and filtering the rows
-bigram_30 <- bigrams_filtered %>%
-  count(word1, word2, sort = TRUE) %>%
-  filter(n > 30) %>%
-  filter(!is.na(word1)) 
-# plot the bigrams that exist more than 30 times
-bigram_graph <- bigram_30 %>%
-  graph_from_data_frame()
-# plot the relationships
-set.seed(2017)
-ggraph(bigram_graph, layout = "fr") +
-  geom_edge_link() +
-  geom_node_point() +
-  geom_node_text(aes(label = name), vjust = 1, hjust = 1)
-# merging to a single column
-combined1 <- bigrams_filtered %>%
-  mutate(bigram = paste(word1,word2))
-# binding the columns together
-tf_idf <- combined1 %>%
-  filter(COUNTY == "LOS ANGELES" | COUNTY == "SAN DIEGO" | COUNTY == "ORANGE" | COUNTY == "RIVERSIDE" | COUNTY == "SAN BERNARDINO" | COUNTY == "SANTA CLARA") %>%
-  filter(!word1 %in% stop_words$word) %>%
-  filter(!word2 %in% stop_words$word) %>%
-  count(COUNTY, bigram) %>%
-  bind_tf_idf(bigram, COUNTY, n) %>%
-  # plotting the 15 largest values for 6 largest urban counties
-  group_by(COUNTY) %>%
-  slice_max(order_by=tf_idf, n=15) %>%
-  mutate(bigram=reorder(bigram, tf_idf)) %>%
-  ggplot() +
-  geom_col(aes(tf_idf, bigram, fill=COUNTY)) +
-  facet_wrap(~COUNTY, scales="free")+
-  theme_minimal() +
-  guides(fill="none")
-#filter for the 6 largest urban counties
-tf_idf_urb <- combined1 %>%
-  filter(COUNTY == "LOS ANGELES" | COUNTY == "SAN DIEGO" | COUNTY == "ORANGE" | COUNTY == "RIVERSIDE" | COUNTY == "SAN BERNARDINO" | COUNTY == "SANTA CLARA") %>%
-  filter(!word1 %in% stop_words$word) %>%
-  filter(!word2 %in% stop_words$word) %>%
-  count(COUNTY, bigram) %>%
-  bind_tf_idf(bigram, COUNTY, n) %>%
-  # plotting the 15 largest values for 6 largest urban counties
-  group_by(COUNTY) %>%
-  slice_max(order_by=tf_idf, n=5) %>%
-  mutate(bigram=reorder(bigram, tf_idf)) %>%
-  ggplot(aes(tf_idf, bigram, fill=COUNTY)) +
-  geom_col() +
-  facet_wrap(~COUNTY, scales="free")+
-  theme_minimal() +
-  guides(fill="none")
- 
-
-large_rural <- c("KERN", "STANISLAUS", "SONOMA", "TULARE", "SOLANO", "SANTA BARBARA")
-retailers <- retailers %>%
-  mutate(large_rural= if_else(COUNTY %in% large_rural, 1, 0))}
-```
-
-# Cluster Analysis of WIC Counties
-Do participants look more similar across counties (rural and urban) or across participant types/needs?
-
-```{r, warning=FALSE}
-
-#Data loading and cleaning
-wic_part <- read_csv("wic_participant.csv") %>%
-  janitor::clean_names() %>%
+wic_redemp_particp <- read_csv("wic_participant.csv") %>%
+  clean_names() %>%
+  rename(COUNTY = vendor_location) %>%
   select(-statewide_infant_formula_rebate, -total_cost_vouchers_adjusted, -average_cost_adjusted, 
   -state_average_cost_adjusted) %>%
-  filter(vendor_location != "STATEWIDE ANNUAL") %>%
-  filter(vendor_location != "STATEWIDE")
-wic_part$number_of_participants_redeemed <- as.numeric(gsub("," , "", 
-  wic_part$number_of_participants_redeemed))
-wic_part$number_vouchers_redeemed <- as.numeric(gsub("," , "", 
-  wic_part$number_vouchers_redeemed))
-
-wic_part$total_cost_vouchers = as.numeric(gsub("\\$", "", wic_part$total_cost_vouchers))
-wic_part$average_cost = as.numeric(gsub("\\$", "", wic_part$average_cost))
-
-
-#Creating a numeric data set for PCA
-as.numeric(wic_part)
-           
-votes_numeric <- votes_103 %>%
-    select(starts_with('v'))
-#Running Principal Component Analysis
-votes_pca <- votes_numeric %>%
-  prcomp()
-
-
-
+  filter(COUNTY != "STATEWIDE ANNUAL") %>%
+  filter(COUNTY != "STATEWIDE") %>%
+  separate(year_month, c("year", "month")) %>%
+  filter(!is.na(average_cost)) %>%
+  ggplot() +
+  geom_col(mapping = aes(participant_category, average_cost, fill = participant_category)) +
+  facet_wrap(~year) +
+  labs(
+    title = "Average Cost by WIC Participant",
+    x = "Type of Participant",
+    y = "Average Cost per Participant (in $)"
+  )+
+  geom_text(mapping = NULL,
+  stat = "identity",
+  position = "identity",
+  parse = FALSE,
+  show.legend = NA,
+  na.rm = TRUE
+)
+  
 
 
+wic_ridge <- wic_part %>%
+  filter(vendor_location == "STATEWIDE") %>%
+  count(year, participant_category) %>%
+  group_by(participant_category) %>%
+  summarize(count = n(),
+            part_rate = sum(n_participant_category)/count) %>%
+  pivot_wider(names_from = year, values_from = freq, values_fill = list(freq = 0))
 
 ```
 
+# Geospatial Analyses
+```{r, outline}
 
-```{r}
 library(tigris)
+
+ca_retails <- retailers %>%
+  group_by(COUNTY) %>%
+  summarize(N_RETAIL = n()) %>%
+  ungroup()
+
 ca_counties_raw <- tigris::counties(
   state = "CA",
   cb = TRUE,
   resolution = "500k",
   year = 2020,
   class = "sf")
+
 #getting geo outline of CA by county
 ca_counties_raw %>%
   ggplot() +
@@ -220,15 +146,13 @@ ca_counties_raw %>%
   theme_void()
 
 
-```
-
-```{r}
 ca_counties <- ca_counties_raw %>%
   dplyr::transmute(
     GEOID,
     MAP_NAME = NAME,
     COUNTY = toupper(NAME)
   )
+
 #upload population
 county_pop_url <- "https://www2.census.gov/programs-surveys/popest/datasets/2010-2019/counties/totals/co-est2019-alldata.csv"
 county_pop_raw <- read_csv(url(county_pop_url))
@@ -254,13 +178,6 @@ ggplot(ca_geospatial_data, aes(fill = retailers_per_100k)) +
   #scale_fill_viridis_c() +
   theme_void()
 ```
-
-```{r}
-#use ca_counties for geospatial
-# next idea: show facet wrap of 1990-2020 by 5 years (1990 1995 2000 2005 2010 2015 2010) for counties? or just line plots? hard with 58 counties.
-```
-
-
 ```{r}
 calfresh <- read_csv("calfresh.csv")
 tidy_calfresh <- calfresh %>%
@@ -352,95 +269,356 @@ snap_map %>%
 #This overall rate graph shows that there is a large percentage of eligible folks across California who do not participate in SNAP despite being eligible for services. The ideal rate, of course, is 100% providing service to all who are eligible. This begs the question: what can California do better to increase the participation rate? Who is not being reached?
 # need to find data that provides participation rate of women and of women who are parents to one or more children. also, could compel us to look at cost of school lunches across state possibly?
 ```
-# WIC Vendors
-```{r loading in WIC data}
-wic_vendors <- read_csv("vendor.csv")
-wic_tidy <- wic_vendors %>%
-  mutate(COUNTY = toupper(COUNTY))
 
-#### retailers data
-wic_retailers <- wic_tidy %>%
-  group_by(COUNTY) %>%
-  summarize(N_RETAIL = n()) %>%
-  ungroup()
-wic_join <- left_join(wic_retailers, ca_pop, by = "COUNTY") %>%
-  mutate(retailers_per_100k = N_RETAIL / (POPESTIMATE2019/100000))
-library(tigris)
-wic_geo_data <- geo_join(
-  spatial_data = ca_counties,
-  data_frame = wic_join,
-  by_sp = "COUNTY",
-  by_df = "COUNTY",
-  how = "left")
-ggplot(wic_geo_data, aes(fill = retailers_per_100k)) +
-  geom_sf() +
-  #scale_fill_viridis_c() +
-  labs(
-    title = "WIC Retailers per 100k"
-  )
-  theme_void()
-```
-
-
-```{r cleaning WIC}
-wic_redemp_county <- read_csv("wic_county.csv") %>%
-  clean_names()
-wic_redemp_particp <- read_csv("wic_participant.csv") %>%
-  clean_names() %>%
-  separate(year_month, c("year", "month")) %>%
-  rename(COUNTY = vendor_location)
-  
-wic_redemp_particp %>%
-  ggplot() +
-  geom_col(mapping = aes(participant_category, average_cost, fill = participant_category)) +
-  facet_wrap(~year) +
-  labs(
-    title = "Average Cost by WIC Participant",
-    x = "Type of Participant",
-    y = "Average Cost per Participant (in $)"
-  ) +
-  geom_text(
-  mapping = aes(participant_category, average_cost, label=average_cost),
-  stat = "identity",
-  parse = FALSE,
-  nudge_x = 0,
-  nudge_y = 0,
-  check_overlap = FALSE,
-  na.rm = FALSE,
-  show.legend = NA,
-  inherit.aes = TRUE
-)
-  
-  
-  
-  
-  theme(axis.text.x = element_blank(),
-        axis.ticks.x = element_blank(),
-        axis.text.y = element_blank(),
-        axis.ticks.y = element_blank())
-
-
-ca_counties_raw <- tigris::counties(
-  state = "CA",
-  cb = TRUE,
-  resolution = "500k",
-  year = 2020,
-  class = "sf")
-8:48
-ca_counties <- ca_counties_raw %>%
-  dplyr::transmute(
-    GEOID,
-    MAP_NAME = NAME,
-    COUNTY = toupper(NAME)
-  )
-
-```
-
+# Decision Tree for Rural/Urban Stores
 ```{r, warning=FALSE}
-wic <- wic %>%
-  janitor::clean_names()
-wic$statewide_infant_formula_rebate
-wic = subset(wic, select = -c(number_of_food_instruments_redeemed,dollar_amount_redeemed_for_food_instruments, number_of_wic_card_transactions_processed, dollar_amount_reimbursed_for_wic_card_transactions,average_cost_adjusted, total_cost_adjusted,statewide_infant_formula_rebate) )
+
+library(tidymodels)
+library(parsnip)
+library(rpart)
+
+#split data
+set.seed(20201020)
+retailers_split <- initial_split(data = retailers, prop = 0.75)
+retailers_train <- training(x = retailers_split)
+retailers_test <- testing(x = retailers_split)
+
+#create recipe
+ret_rec <- recipe(formula=COUNTY ~ ., data = retailers_train)
+
+#create  model
+ret_mod <-
+  decision_tree() %>%
+  set_engine(engine = "rpart") %>%
+  set_mode(mode = "classification")
+
+#create workflow
+ret_wf <- workflow() %>%
+add_recipe(ret_rec) %>%
+add_model(ret_mod)
+
+#fit cart model
+ret_fit <- ret_wf %>%
+fit(data = retailers_train)
+rpart.plot::rpart.plot(x = ret_fit$fit$fit$fit)
+
+predictions <- bind_cols(
+retailers_test,
+predict(object = ret_fit, new_data = retailers_test),
+predict(object = ret_fit, new_data = retailers_test, type = "prob")
+)
+select(predictions, COUNTY, starts_with(".pred"))
+
+conf_mat(data = predictions,
+truth = COUNTY,
+estimate = .pred_class)
 
 ```
+
+# ML with WIC - Linear Regression
+```{r, warning=FALSE}
+
+library(tidymodels)
+library(rsample)
+library(parsnip)
+library(recipes)
+library(workflows)
+library(tune)
+library(yardstick)
+library(glmnet)
+
+#Data loading and cleaning
+wic_models <- read_csv("wic_participant.csv") %>%
+  janitor::clean_names() %>%
+  filter(vendor_location != "STATEWIDE ANNUAL") %>%
+  filter(vendor_location != "STATEWIDE") %>%
+select(-statewide_infant_formula_rebate, -total_cost_vouchers_adjusted, -average_cost_adjusted, 
+  -state_average_cost_adjusted, -total_cost_vouchers, -participant_category, -vendor_location) %>%
+separate(year_month, c("year", "month")) %>%
+  mutate(year = as.numeric(year)) %>%
+  mutate(month = as.numeric(month))
+
+wic_models$number_of_participants_redeemed <- as.numeric(gsub("," , "", 
+  wic_models$number_of_participants_redeemed))
+wic_models$number_vouchers_redeemed <- as.numeric(gsub("," , "", 
+  wic_models$number_vouchers_redeemed))
+wic_models$average_cost = as.numeric(gsub("\\$", "", wic_models$average_cost))
+
+
+#predict number of vouchers redeemed
+#----------------------------------------
+#linear regression
+
+#initial split
+set.seed(20211102)
+split <- initial_split(wic_models, prop = 0.7, strata = "number_vouchers_redeemed")
+wic_train <- training(split)
+wic_test <- testing(split)
+
+#recipe
+wic_rec <- recipe(number_vouchers_redeemed ~., data = wic_train) %>%
+  step_nzv(all_predictors()) %>%
+  step_normalize(all_predictors())
+
+# set up resampling using 10-fold cross validation
+set.seed(20211102)
+folds <- vfold_cv(data = wic_train, v = 10, repeats = 1)
+
+# create a linear regression model
+wic_mod <- linear_reg() %>%
+  set_engine("lm")
+
+# create a workflow 
+wic_wf <- workflow() %>%
+  add_recipe(wic_rec) %>%
+  add_model(wic_mod)
+
+# fit the model 
+wic_cv <- wic_wf %>%
+  fit_resamples(resamples = folds)
+
+# select the best model
+wic_best <- wic_cv %>%
+  select_best("rmse")
+
+# finalize the workflow
+wic_final <- finalize_workflow(
+  wic_wf,
+  parameters = wic_best
+)
+
+# fit to the training data and extract coefficients
+wic_coefs <- wic_final %>%
+  fit(data = wic_train) %>%
+  extract_fit_parsnip() %>%
+  vip::vi(lambda = wic_best$penalty)
+
+collect_metrics(wic_cv, summarize=TRUE)%>%
+  filter(.config == "Preprocessor1_Model1")
+
+#plot the RMSE across the 10 resamples
+collect_metrics(wic_cv, summarize = FALSE) %>%
+filter(.config == "Preprocessor1_Model1",
+       .metric == "rmse") %>%
+ggplot(aes(id, .estimate, group = .metric)) +
+geom_line() +
+geom_point() +
+scale_y_continuous() +
+labs(title = "Calculated RMSE Across the 10 Folds",
+y = "RMSE_hat") +
+theme_minimal()
+
+#fit to test data
+wic_final_model <- fit(wic_wf, data = wic_test)
+
+#make predictions
+final_predictions <- bind_cols(
+  wic_models,
+  predict(wic_final_model, wic_models,
+          type="numeric"))
+
+print(final_predictions)
+
+#----------
+#Lasso regression
+
+#initial split
+set.seed(20211101)
+wic_split <- initial_split(data = wic_models, prop = 0.75)
+# create the training and testing data
+wic_train <- training(x = wic_split)
+wic_test <- testing(x = wic_split)
+
+#folds
+folds <- vfold_cv(data = wic_train, v = 10)
+folds
+
+#Create wic recipe
+wic_rec <- recipe(average_cost ~., data = wic_train) %>%
+  #add some steps
+  step_nzv(all_predictors()) %>%
+  step_normalize(all_predictors()) %>%
+  step_indicate_na()
+
+#tuning grid for lasso
+lasso_grid <- grid_regular(penalty(), levels = 10)
+
+#lasso mod
+lasso_mod <- 
+  linear_reg(
+    penalty = tune(),
+    mixture = 1
+  ) %>%
+  set_engine(engine = "glmnet") 
+
+#lasso workflow
+lasso_wf <- 
+    workflow() %>%
+    add_model(spec = lasso_mod) %>%
+    add_recipe(recipe = wic_rec)
+
+#hyperparameter tuning
+lasso_cv <- lasso_wf %>%
+    tune_grid(
+      resamples = folds,
+      grid = lasso_grid)
+
+# select the best model based on the "rmse" metric
+lasso_best <- lasso_cv %>%
+  select_best(metric = "rmse")
+
+# use the finalize_workflow() function with your lasso workflow and the best model
+# to update (or "finalize") your workflow by modifying the line below
+lasso_final <- finalize_workflow(
+  lasso_wf,
+  parameters = lasso_best)
+
+# fit to the training data and extract coefficients
+lasso_coefs <- lasso_final %>%
+  fit(data = chi_train) %>%
+  extract_fit_parsnip() %>%
+  vip::vi(lambda = lasso_best$penalty)
+
+collect_metrics(lasso_cv, summarize=TRUE) %>%
+  filter(.config == "Preprocessor1_Model10")
+
+#plot the RMSE across the 10 resamples
+collect_metrics(lasso_cv, summarize = FALSE) %>%
+filter(.config == "Preprocessor1_Model10",
+       .metric == "rmse") %>%
+ggplot(aes(id, .estimate, group = .metric)) +
+geom_line() +
+geom_point() +
+scale_y_continuous() +
+labs(title = "Calculated RMSE Across the 10 Folds",
+y = "RMSE_hat") +
+theme_minimal()
+
+
+
+#  mutate(across(starts_with("average"), ~gsub("\\$", "", .) %>% as.numeric)) %>%
+#  mutate(across(starts_with("total"), ~gsub("\\$", "", .) %>% as.numeric))
+ # select(participant_category, number_of_participants_redeemed, number_vouchers_redeemed)
+#wic_models$total_cost_vouchers = as.numeric(gsub("\\$", "", wic_models$total_cost_vouchers))
+
+
+```
+
+# Text Analysis - SNAP Store Locations
+```{r, warning=FALSE}
+
+library(tidytext)
+library(igraph)
+library(ggraph)
+
+#use retailers data that was cleaned earlier
+retailers_text <- retailers %>% 
+  filter(!is.na(store_name)) %>%
+  select(-zip4)
+
+#creating biagram
+bigram_snap <- retailers %>%
+  unnest_tokens(bigram, store_name, token = "ngrams", n = 2)
+
+#separating the bigram into two columns
+bigrams_separated <- bigram_snap %>%
+  separate(bigram, c("word1", "word2"), sep = " ")
+
+#filtering out rows without stopwords
+bigrams_filtered <- bigrams_separated %>%
+  filter(!word1 %in% stop_words$word & !word2 %in% stop_words$word)
+
+#counting number of appearances of each bigram and filtering the rows
+bigram_30 <- bigrams_filtered %>%
+  count(word1, word2, sort = TRUE) %>%
+  filter(n > 30) %>%
+  filter(!is.na(word1)) 
+
+# plot the bigrams that exist more than 30 times
+bigram_graph <- bigram_30 %>%
+  graph_from_data_frame()
+# plot the relationships
+set.seed(2017)
+ggraph(bigram_graph, layout = "fr") +
+  geom_edge_link() +
+  geom_node_point() +
+  geom_node_text(aes(label = name), vjust = 1, hjust = 1)
+# merging to a single column
+combined1 <- bigrams_filtered %>%
+  mutate(bigram = paste(word1,word2))
+
+# filtering for the 6 largest urban counties
+tf_idf_urb <- combined1 %>%
+  filter(COUNTY == "LOS ANGELES" | COUNTY == "SAN DIEGO" | COUNTY == "ORANGE" | COUNTY == "RIVERSIDE" | COUNTY == "SAN BERNARDINO" | COUNTY == "SANTA CLARA") %>%
+  filter(!word1 %in% stop_words$word) %>%
+  filter(!word2 %in% stop_words$word) %>%
+  count(COUNTY, bigram) %>%
+  bind_tf_idf(bigram, COUNTY, n) %>%
+  #plotting the 10 most frequent
+  group_by(COUNTY) %>%
+  slice_max(order_by=tf_idf, n=10) %>%
+  mutate(bigram=reorder(bigram, tf_idf)) %>%
+  ggplot() +
+  geom_col(aes(tf_idf, bigram, fill=COUNTY)) +
+  facet_wrap(~COUNTY, scales="free")+
+  theme(axis.text.x = element_text(angle = 45, hjust=1)) +
+  guides(fill="none") 
+
+tf_idf_urb
+
+
+# - - - - - - - - - -
+#filter for 6 largest rural counties
+tf_idf_rur_high <- combined1 %>%
+  filter(COUNTY == "KERN" | COUNTY == "STANISLAUS" | COUNTY == "SONOMA" | COUNTY == "TULARE" | COUNTY == "SOLANO" | COUNTY == "MONTEREY") %>% #chose not to use Santa Barbara because it did not feel reflective of rural
+  filter(!word1 %in% stop_words$word) %>%
+  filter(!word2 %in% stop_words$word) %>%
+  count(COUNTY, bigram) %>%
+  bind_tf_idf(bigram, COUNTY, n) %>%
+  # plotting the 5 most frequent store names
+  group_by(COUNTY) %>%
+  slice_max(order_by=tf_idf, n=5) %>%
+  mutate(bigram=reorder(bigram, tf_idf)) %>%
+  ggplot(aes(tf_idf, bigram, fill=COUNTY)) +
+  geom_col() +
+  facet_wrap(~COUNTY, scales="free")+
+  theme(axis.text.x = element_text(angle = 45, hjust=1)) +
+  guides(fill="none") +
+  scale_x_continuous()
+
+tf_idf_rur_high
+
+# - - - - - - - - - -
+#filter for 6 smallest rural counties
+tf_idf_rur_low <- combined1 %>%
+  filter(COUNTY == "ALPINE" | COUNTY == "SIERRA" | COUNTY == "MODOC" | COUNTY == "TRINITY" | COUNTY == "MONO" | COUNTY == "MARIPOSA") %>%
+  filter(!word1 %in% stop_words$word) %>%
+  filter(!word2 %in% stop_words$word) %>%
+  count(COUNTY, bigram) %>%
+  bind_tf_idf(bigram, COUNTY, n) %>%
+  # plotting the 5 most frequent store names
+  group_by(COUNTY) %>%
+  slice_max(order_by=tf_idf, n=5) %>%
+  mutate(bigram=reorder(bigram, tf_idf)) %>%
+  ggplot(aes(tf_idf, bigram, fill=COUNTY)) +
+  geom_col() +
+  facet_wrap(~COUNTY, scales="free")+
+  theme(axis.text.x = element_text(angle = 45, hjust=1)) +
+  guides(fill="none")
+
+tf_idf_rur_low
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
 
