@@ -87,12 +87,41 @@ ca_geospatial_data <- geo_join(
 ggplot(ca_geospatial_data, aes(fill = retailers_per_100k)) +
   geom_sf() +
   #scale_fill_viridis_c() +
+  labs(
+    title = "Number of Retailers per 100,000 People by County in 2019"
+  ) +
   theme_void()
 ```
 
 ```{r}
-#use ca_counties for geospatial
-# next idea: show facet wrap of 1990-2020 by 5 years (1990 1995 2000 2005 2010 2015 2010) for counties? or just line plots? hard with 58 counties.
+# merge ca_counties with tidy_demos and retailers
+cal_merge <- left_join(retailers, tidy_demos, by = "COUNTY") %>%
+  select(-address_line_2)
+
+
+
+# creating maps of retailers, filtered by counties with demographics >50%
+# get white column back
+
+library(tigris)
+snap_geo <- geo_join(
+  spatial_data = ca_counties,
+  data_frame = cal_merge,
+  by_sp = "COUNTY",
+  by_df = "COUNTY",
+  how = "left")
+
+snap_geo %>%
+  filter()
+  ggplot(mapping = aes())
+ggplot(snap_geo, aes(fill = retailers_per_100k)) +
+  geom_sf() +
+  #scale_fill_viridis_c() +
+  labs(
+    title = "Number of Retailers per 100,000 People by County in 2019"
+  ) +
+  theme_void()
+  
 ```
 
 
@@ -134,9 +163,8 @@ map_elder <- ggplot(calfresh_map, aes(fill = rate_elder)) +
   geom_sf() +
   scale_fill_viridis_c() +
   theme_void()
-map_child
-map_adult
-map_elder
+library(patchwork)
+map_child + map_adult + map_elder
 ```
 
 ```{r}
@@ -174,7 +202,7 @@ tidy_demos <- snap_demos %>%
   clean_names() %>%
   rename(year = fileyear) %>%
   mutate(COUNTY = toupper(county)) %>%
-  select(year, COUNTY, person, cases, female, male, black, hispanic, asian_pi, native_american_other_unknown) %>%
+  select(year, COUNTY, person, cases, female, male, black, hispanic, asian_pi, native_american_other_unknown, white) %>%
   filter(COUNTY != "COUNTY TOTAL")
 ## issue with this dataset is that it does not include # of cases by those demographics. it's only showing demographics for the county and how many cases there are.
 
@@ -200,6 +228,26 @@ snap_map %>%
 
 # need to find data that provides participation rate of women and of women who are parents to one or more children. also, could compel us to look at cost of school lunches across state possibly?
 ```
+# SNAP Demography
+```{r }
+#use tidy_demos for SNAP demographics
+snap_ridge <- tidy_demos %>%
+  rename(snap_year = year) %>%
+ ### mutate(STATEWIDE = sum(rate)/n(year))
+#need to create new column or row with statewide total
+snap_ridge %>%
+  ggplot(mapping = aes(x = rate, y = snap_year)) +
+  geom_density_ridges_gradient(scale = 3, rel_min_height = 0.01) +
+  scale_fill_viridis(name = "Rate", option = "C") +
+  labs(title = 'Temperatures in Lincoln NE in 2016') +
+  theme_ipsum() +
+    theme(
+      legend.position="none",
+      panel.spacing = unit(0.1, "lines"),
+      strip.text.x = element_text(size = 8)
+    )
+```
+
 # WIC Retailers
 ```{r loading in WIC data}
 wic_vendors <- read_csv("vendor.csv")
@@ -228,7 +276,7 @@ ggplot(wic_geo_data, aes(fill = retailers_per_100k)) +
   #scale_fill_viridis_c() +
   labs(
     title = "WIC Retailers per 100k"
-  )
+  ) +
   theme_void()
 ```
 
@@ -240,10 +288,22 @@ wic_redemp_particp <- read_csv("wic_participant.csv") %>%
   clean_names() %>%
   separate(year_month, c("year", "month")) %>%
   rename(COUNTY = vendor_location)
+
   
 wic_redemp_particp %>%
   ggplot() +
   geom_col(mapping = aes(participant_category, average_cost, fill = participant_category)) +
+  geom_text(
+    mapping = aes(participant_category, average_cost, label = average_cost),
+    stat = "identity",
+    parse = FALSE,
+    nudge_x = 0,
+    nudge_y = 0,
+    check_overlap = FALSE,
+    na.rm = FALSE,
+    show.legend = NA,
+    inherit.aes = TRUE
+    ) + 
   facet_wrap(~year) +
   labs(
     title = "Average Cost by WIC Participant",
@@ -254,14 +314,426 @@ wic_redemp_particp %>%
         axis.ticks.x = element_blank(),
         axis.text.y = element_blank(),
         axis.ticks.y = element_blank())
+```
 
 
-calfresh_map %>%
-  ggplot(mapping = aes(fill = rate_adult)) +
-  geom_sf() +
-  scale_fill_viridis_c() +
-  facet_wrap(~year) +
-  labs(title = "Adult SNAP Participation Rate") +
+``` {r PCA}
+# calculate average number employed in each industry/race_gender group from 2015-2020
+# don't forget to ungroup() at the end!
+library(tidyverse)
+
+wic_part <- wic_redemp_particp %>%
+  group_by(year, COUNTY, participant_category) %>%
+  select(-statewide_infant_formula_rebate, -total_cost_vouchers, -total_cost_vouchers_adjusted, -average_cost_adjusted, -state_average_cost_adjusted)
+
+```
+
+
+
+```{r ridgeplot timeseries}
+library(ggridges)
+library(viridis)
+library(hrbrthemes)
+#this drops all of the statewide observations and transforms character into numeric
+wic_part <- wic_part %>%
+  mutate(across(starts_with("average"), ~gsub("\\$", "", .) %>% as.numeric)) %>%
+  na.omit() %>% 
+  mutate(month = as.numeric(month)) %>%
+  mutate(year = as.numeric(year))
+wic_part$number_of_participants_redeemed <- as.numeric(gsub("," , "", wic_part$number_of_participants_redeemed))
+wic_part$number_vouchers_redeemed <- as.numeric(gsub("," , "", wic_part$number_vouchers_redeemed))
+```
+
+
+```{r}
+#THIS IS BEAUTIFUL PLEASE LEAVE IT ALONE
+wic_part %>%
+  ggplot(mapping = aes(x=month, y=average_cost, fill = participant_category)) +
+  geom_violin() +
+  scale_x_continuous(breaks = seq(0, 13, by = 1)) +
+  xlab("class") +
+  theme(legend.position = "none") +
+  xlab("") +
+  theme_minimal()
+```
+
+```{r}
+#THIS IS BEAUTIFUL PLEASE LEAVE IT ALONE
+wic_part %>%
+  ggplot(mapping = aes(x=participant_category, y=average_cost, fill = participant_category)) +
+  geom_violin() +
+  xlab("class") +
+  theme(legend.position = "none") +
+  xlab("") +
+  theme_minimal()
+```
+```{r by county}
+urban <- c("LOS ANGELES",  "ORANGE", "SAN FRANCISCO", "SAN MATEO", "ALAMEDA", "CONTRA COSTA", "MARIN", "RIVERSIDE",
+"SACRAMENTO", "SAN BERNARDINO", "SAN DIEGO", "SAN JOAQUIN", "SANTA CLARA", "VENTURA", "FRESNO")
+
+
+wic_tidy <- wic_part %>% 
+  mutate(urban = if_else(COUNTY %in% urban, 1, 0)) 
+
+
+rural <-c("ALPINE", "AMADOR", "BUTTE", "CALAVERAS", "COLUSA", "DEL NORTE", "EL DORADO", "GLENN",
+"HUMBOLDT", "IMPERIAL", "INYO", "LAKE", "LASSEN", "MADERA", "MARIPOSA", "MENDOCINO", "MERCED", "MODOC",
+"MONO", "MONTEREY", "NAPA", "NEVADA", "PLACER", "PLUMAS", "SAN BENITO", "SAN LUIS OBISPO",
+"SANTA BARBARA", "SHASTA", "SIERRA", "SISKIYOU", "SOLANO", "SONOMA", "SUTTER", "TEHAMA", "TRINITY",
+"TULARE", "TUOLUMNE", "YOLO", "YUBA", "STANISLAUS", "KERN", "KINGS", "SANTA CRUZ")
+
+
+# GREAT VIZ - shows more variation for rural than urban
+# USE THIS ONE FOR SUBMISSION
+wic_tidy %>%
+  ggplot(mapping = aes(x=participant_category, y=average_cost, fill = participant_category)) +
+  geom_violin() +
+  facet_wrap(~urban) +
+  xlab("class") +
+  theme(legend.position = "none") +
+  xlab("") +
+  theme_minimal() +
   theme(axis.text.x = element_blank(),
-        axis.ticks.x = element_blank())
+        axis.ticks.x = element_blank()) +
+  labs(
+    title = "Average Cost by Participant, 0=Rural and 1=Urban",
+    source = "California Open Data"
+  )
+
+```
+
+```{r wic numeric for PCA}
+# STATE NUMERIC ONLY is wic_numeric KEEP THIS CODE!!!
+wic_numeric <- wic_part %>%
+  filter(COUNTY == "STATEWIDE") %>%
+  select(number_of_participants_redeemed, number_vouchers_redeemed, average_cost) %>%
+  mutate(part_type = case_when(
+    participant_category == "Breastfeeding Mother" ~ "1",
+    participant_category == "Child" ~ "2",
+    participant_category == "Infant" ~ "3",
+    participant_category == "Non-Breastfeeding Mother" ~ "4",
+    participant_category == "Prenatal" ~ "5"
+  )) %>%
+  ungroup() %>%
+  select(-participant_category, -COUNTY) %>%
+  mutate(part_type = as.numeric(part_type)) %>%
+  rename(n_vouchers = number_vouchers_redeemed) %>%
+  rename(n_part = number_of_participants_redeemed)
+
+wic_kmeans <- kmeans(wic_numeric,
+                     centers = 4,
+                     nstart = 100)
+```
+
+```{r correlation plot}
+library(corrplot)
+correlation_plot <- cor(wic_numeric)
+# creates a correlation plot, KEEP THIS CODE CHUNK!!!!
+corrplot(correlation_plot, method = "shade")
+
+```
+Beginning June 1, 2019, SSI/SSP recipients may be eligible for CalFresh benefits for the first time with no change to SSI/SSP monthly benefit.
+
+```{r PCA from class tutorial}
+wic_state <- wic_part %>%
+   filter(COUNTY == "STATEWIDE") %>%
+  select(number_of_participants_redeemed, number_vouchers_redeemed, average_cost) %>%
+  mutate(part_type = case_when(
+    participant_category == "Breastfeeding Mother" ~ "1",
+    participant_category == "Child" ~ "2",
+    participant_category == "Infant" ~ "3",
+    participant_category == "Non-Breastfeeding Mother" ~ "4",
+    participant_category == "Prenatal" ~ "5"
+  )) %>%
+  ungroup() %>%
+  mutate(part_type = as.numeric(part_type)) %>%
+  rename(n_vouchers = number_vouchers_redeemed) %>%
+  rename(n_part = number_of_participants_redeemed)
+wic_pca_numeric <- wic_state %>%
+  select_if(is.numeric)
+
+#run PCA
+pca_wic <- prcomp(wic_pca_numeric)
+
+#extract principle components
+wic_pcs <- pca_wic %>%
+  .$x %>%
+  as_tibble()
+
+#combine pcs to county and participant category
+wic_pcs <- bind_cols(
+  select(wic_state, COUNTY, participant_category),
+  wic_pcs
+)
+
+#fit with 6 clusters
+wic_kmeans6 <- kmeans(
+  wic_pca_numeric,
+  centers = 6,
+  nstart = 100
+)
+
+bind_cols(
+  select(wic_state, COUNTY, participant_category),
+  cluster = wic_kmeans6$cluster
+) %>%
+  count(participant_category, cluster)
+```
+```{r continuing class tutorial}
+wic_clusters <- bind_cols(
+  select(wic_state, COUNTY, participant_category),
+  select(wic_pcs, PC1, PC2, PC3, PC4, PC5),
+  cluster6 = wic_kmeans6$cluster)
+
+
+ggplot() +
+  geom_point(
+    data = wic_clusters,
+    mapping = aes(PC1, PC2, color = factor(cluster6)),
+    alpha = 0.5
+  ) +
+  theme_minimal()
+```
+
+
+```{r}
+library(cluster)
+library(dendextend)
+library(factoextra)
+library(GGally)
+library(recipes)
+# create a recipe with no outcome variable and all predictors
+wic_pca_rec <- recipe(~., data = wic_numeric) %>%
+  # center and scale all predictors
+  step_center(all_predictors()) %>%
+  step_scale(all_predictors()) %>%
+  # run prep to prepare recipe
+  prep()
+
+
+# apply recipe to employment_rec
+wic_clust <- wic_pca_rec %>%
+  bake(new_data = NULL)
+
+# PCA ---------------------------------------------------------------------
+
+# create a correlation matrix on employment_clust
+cor(wic_clust)
+
+# conduct PCA on the employment_clust data
+principal_components <- prcomp(wic_clust)
+
+# obtain summary metrics
+summary(principal_components)
+
+# obtain loadings
+principal_components$rotation
+
+# obtain component values for each observation
+pca_data <- as_tibble(principal_components$x) %>%
+  select(PC1, PC2, PC3)
+
+# cluster analysis --------------------------------------------------------
+
+# set a seed because the clusters are not deterministic
+set.seed(20200205)
+
+# total within sum of squares
+fviz_nbclust(wic_clust, FUN = kmeans, method = "wss")
+
+# total silhouette width
+fviz_nbclust(wic_clust, FUN = kmeans, method = "silhouette")
+
+# gap statistic
+fviz_nbclust(wic_clust, FUN = kmeans, method = "gap_stat")
+
+# run kmeans with the optimal number of clusters using the employment_clust data, set nstart = 100
+clust_kmeans <- kmeans(
+  wic_clust,
+  centers = 6,
+  nstart = 100
+)
+
+# examine the cluster means 
+tidy(clust_kmeans)
+```
+
+```{r visualizing PCA}
+# visualization -----------------------------------------------------------
+# create a dataframe that binds together the occupation, PCA, and cluster data
+bind_clusters <- bind_cols(
+  select(wic_part, participant_category), 
+  select(wic_numeric, PC1, PC2), 
+  cluster = clust_kmeans$cluster
+)
+
+occ_clusters <- occ_clusters %>%
+  left_join(employed %>% select(occupation, minor_occupation) %>% unique())
+
+# get names of most central occupations to each cluster
+minor_occ_names <- occ_clusters %>%
+  left_join(employed %>% select(occupation, minor_occupation) %>% unique()) %>%
+  group_by(cluster) %>%
+  mutate(dist = sqrt((PC1 - mean(PC1)) ^ 2 + (PC2 - mean(PC2)) ^ 2)) %>%
+  slice_min(dist) %>%
+  ungroup()
+
+# create a plot of the clusters with PC1 and PC2 as the x and y axis
+ggplot() +
+  geom_point(
+    data = occ_clusters,
+    mapping = aes(x = PC1, y = PC2, color = factor(cluster)),
+    alpha = 0.5
+  ) +
+  ggrepel::geom_text_repel(
+    data = minor_occ_names %>% left_join(occ_clusters), 
+    mapping = aes(PC1, PC2, label = minor_occupation),
+    size = 2
+  ) +
+  scale_color_manual(values = c("blue", "red", "green")) +
+  labs(
+    x = "PC1",
+    y = "PC2",
+    title = "Clusters by Occupation"
+  ) + 
+  theme_minimal() +
+  guides(text = NULL)
+
+```
+
+```{r}
+library(tidytext)
+library(igraph)
+library(ggraph)
+
+#use SNAP retailers data
+retailers %>% filter(!is.na(store_name))
+#creating biagram
+bigram_snap <- retailers %>%
+  unnest_tokens(bigram, store_name, token = "ngrams", n = 2)
+#separating the bigram into two columns
+bigrams_separated <- bigram_snap %>%
+  separate(bigram, c("word1", "word2"), sep = " ")
+#filtering out rows without stopwords
+bigrams_filtered <- bigrams_separated %>%
+  filter(!word1 %in% stop_words$word) %>%
+  filter(!word2 %in% stop_words$word)
+#counting number of appearances of each bigram and filtering the rows
+bigram_30 <- bigrams_filtered %>%
+  count(word1, word2, sort = TRUE) %>%
+  filter(n > 30) %>%
+  filter(!is.na(word1)) #ask Maitreyi what number we should use here - 30? 150?
+# plot the bigrams that exist more than 30 times
+bigram_graph <- bigram_30 %>%
+  graph_from_data_frame()
+# plot the relationships
+set.seed(2017)
+ggraph(bigram_graph, layout = "fr") +
+  geom_edge_link() +
+  geom_node_point() +
+  geom_node_text(aes(label = name), vjust = 1, hjust = 1)
+# merging to a single column
+combined1 <- bigrams_filtered %>%
+  mutate(bigram = paste(word1,word2))
+# binding the columns together
+tf_idf <- combined1 %>%
+  filter(COUNTY == "LOS ANGELES" | COUNTY == "SAN DIEGO" | COUNTY == "ORANGE" | COUNTY == "RIVERSIDE" | COUNTY == "SAN BERNARDINO" | COUNTY == "SANTA CLARA") %>%
+  filter(!word1 %in% stop_words$word) %>%
+  filter(!word2 %in% stop_words$word) %>%
+  count(COUNTY, bigram) %>%
+  bind_tf_idf(bigram, COUNTY, n) %>%
+  # plotting the 15 largest values for 6 largest urban counties
+  group_by(COUNTY) %>%
+  slice_max(order_by=tf_idf, n=15) %>%
+  mutate(bigram=reorder(bigram, tf_idf)) %>%
+  ggplot() +
+  geom_col(aes(tf_idf, bigram, fill=COUNTY)) +
+  facet_wrap(~COUNTY, scales="free")+
+  theme_minimal() +
+  guides(fill="none")
+
+#have not edited this yet!
+tf_idf_urb <- combined1 %>%
+  filter(COUNTY == "LOS ANGELES" | COUNTY == "SAN DIEGO" | COUNTY == "ORANGE" | COUNTY == "RIVERSIDE" | COUNTY == "SAN BERNARDINO" | COUNTY == "SANTA CLARA") %>%
+  filter(!word1 %in% stop_words$word) %>%
+  filter(!word2 %in% stop_words$word) %>%
+  count(COUNTY, bigram) %>%
+  bind_tf_idf(bigram, COUNTY, n) %>%
+  # plotting the 15 largest values for 6 largest urban counties
+  group_by(COUNTY) %>%
+  slice_max(order_by=tf_idf, n=10) %>%
+  mutate(bigram=reorder(bigram, tf_idf)) %>%
+  ggplot(aes(tf_idf, bigram, fill=COUNTY)) +
+  geom_col() +
+  facet_wrap(~COUNTY, scales="free")+
+  theme_minimal() +
+  guides(fill="none")
+
+tf_idf_urb
+```
+
+```{r rural analysis}
+tf_idf_rur <- combined1 %>%
+  filter(COUNTY == "KERN" | COUNTY == "STANISLAUS" | COUNTY == "SONOMA" | COUNTY == "TULARE" | COUNTY == "SOLANO" | COUNTY == "SANTA BARBARA") %>%
+  filter(!word1 %in% stop_words$word) %>%
+  filter(!word2 %in% stop_words$word) %>%
+  count(COUNTY, bigram) %>%
+  bind_tf_idf(bigram, COUNTY, n) %>%
+  # plotting the 15 largest values for 6 largest rural counties
+  group_by(COUNTY) %>%
+  slice_max(order_by=tf_idf, n=5) %>%
+  mutate(bigram=reorder(bigram, tf_idf)) %>%
+  ggplot(aes(tf_idf, bigram, fill=COUNTY)) +
+  geom_col() +
+  facet_wrap(~COUNTY, scales="free")+
+  theme_minimal() +
+  guides(fill="none")
+tf_idf_rur
+```
+
+```{r rural analysis}
+tf_idf_small <- combined1 %>%
+  filter(COUNTY == "ALPINE" | COUNTY == "SIERRA" | COUNTY == "MODOC" | COUNTY == "TRINITY" | COUNTY == "MONO" | COUNTY == "MARIPOSA") %>%
+  filter(!word1 %in% stop_words$word) %>%
+  filter(!word2 %in% stop_words$word) %>%
+  count(COUNTY, bigram) %>%
+  bind_tf_idf(bigram, COUNTY, n) %>%
+  # plotting the 15 largest values for 6 largest rural counties
+  group_by(COUNTY) %>%
+  slice_max(order_by=tf_idf, n=5) %>%
+  mutate(bigram=reorder(bigram, tf_idf)) %>%
+  ggplot(aes(tf_idf, bigram, fill=COUNTY)) +
+  geom_col() +
+  facet_wrap(~COUNTY, scales="free")+
+  theme_minimal() +
+  guides(fill="none")
+tf_idf_small
+```
+
+
+```{r trying ridgeplot again}
+library(forcats)
+library(tidyr)
+
+wic_ridge_use <- read_csv("participant_rates.csv") %>%
+  pivot_longer(cols=c("2010", "2011", "2012", "2013", "2014", "2015", "2016", "2017", "2018"),
+               names_to = "year",
+               values_to = "rate")
+
+# CANNOT FIGURE OUT WHICH SHOULD BE X AND Y AND FILL :((((())))) no longer working :(((())))
+wic_ridge_use %>%
+  ggplot(mapping = aes(y = rate, fill = participant_category)) +
+  geom_density_ridges(alpha=0.6, stat="binline", bins = 20) +
+  theme_ridges() +
+  facet_grid(~year) +
+  theme(
+    legend.position = "right",
+    panel.spacing = unit(0.1, "lines"),
+    strip.text.x = element_text(size = 8)
+  ) +
+  ylab("% of Participants") +
+  xlab("") +
+  theme(axis.text.y = element_blank(),
+        axis.ticks.x = element_blank(),
+        axis.text.x = element_blank())
 ```
