@@ -1,0 +1,910 @@
+---
+title: "Final Project"
+author: "Shelby, Imani, Maitreyi, Hannah"
+date: "5/1/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE, warning=FALSE, message=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Executive Summary
+Our project was motivated by the need to understand the demand for and the supply of social services in the United States of America. To narrow this down further, we restricted this study to the state of California, as there is relatively greater access to social services such as WIC and SNAP in this state. In FY 2021, SNAP helped 4.3 million CA residents or 11% of the population, and in FY 2021, WIC helped 950,000 CA residents.
+
+Studies also indicate that many households in California struggle to put food on the table. This statistic indicates the need for further analysis of WIC and SNAP services in California.
+
+Most recent data indicates that:
+
+* 9.8% of households were “food insecure"
+* 11% of the population lived below the poverty line
+* 14.5% of children lived below the poverty line
+* 10.7% of older adults lived below the poverty line
+
+Policy Questions:
+
+* What does social service delivery look like in CA and how well is the state meeting demand?
+* Where are services more accessible or less accessible to those who are eligible?
+* Why are redemption rates of social services lower than 60% in CA?
+
+We used data from [California Open Data portals](https://data.ca.gov/dataset/california-women-infants-and-children-program-redemption-by-county), [USDA.gov](https://www.usda.gov/), and census data using tidycensus to conduct our analyses.
+
+We used a combination of tools to answer our motivating policy questions. First, we began by conducting exploratory analyses, including the use of graphs and geospatial visualizations, to further analyze access to WIC and SNAP store locations in different counties in California. We were able to discern trends between different populations and identify the impact of development (urban or rural county) on access to social services. We then used supervised and unsupervised machine learning models (text analysis, cluster analysis, linear regression model) to predict store locations that were likely to have WIC or SNAP and number of vouchers redeemed across counties, based on date and number of families in the region.
+
+The challenges we came across while coding this project were largely related to the data we had access to. We were unable to conduct analysis by race and gender, because of the way these factors were coded into the table. With more time and access to resources, we would love to analyze how women and non-binary folks access these social services. Comparing and contrasting these results in urban counties and rural counties will also be critical to policy making.
+
+# Background
+
+**What is SNAP?**
+
+SNAP is the Supplemental Nutrition Assistance Program. It provides nutrition benefits to supplement the food budget of needy families so they can purchase healthy food and move towards self-sufficiency. It is the largest federal nutrition assistance program and provides benefits to eligible to low-income benefits to individuals and families. 
+
+
+**What is WIC?**
+
+WIC is the Women, Infants, and Children food assistance program sponsored by USDA for special supplemental nutrition. WIC operates by providing vouchers or electronic benefit transfers (EBT) for WIC approved foods from commercial food retailers. 
+
+
+```{r data loading and cleaning, warning=FALSE, message=FALSE, results='hide', echo=FALSE}
+#loading and cleaning data in advance so that it can be used in a combination of plot below
+
+library(tidycensus)
+library(tidyverse)
+library(ggplot2)
+library(dplyr)
+library(janitor)
+library(sf)
+library(stringr)
+library(lubridate)
+library(ggridges)
+library(viridis)
+library(hrbrthemes)
+
+#1. SNAP Store Locations - "retailers"
+retailers <- read_csv("SNAP_Store_Locations.csv")
+retailers <- retailers %>%
+  janitor::clean_names() %>%
+  filter(state == "CA") %>%
+  mutate(COUNTY = toupper(county)) %>%
+  select(-county, -address_line_2)
+
+# creating urban and rural counties
+urban <- c("LOS ANGELES",  "ORANGE", "SAN FRANCISCO", "SAN MATEO", "ALAMEDA", "CONTRA COSTA", "MARIN", "RIVERSIDE", 
+"SACRAMENTO", "SAN BERNARDINO", "SAN DIEGO", "SAN JOAQUIN", "SANTA CLARA", "VENTURA", "FRESNO")
+
+  retailers <- retailers %>%
+  mutate(urban= if_else(COUNTY %in% urban, 1, 0))
+
+  rural <-c("ALPINE", "AMADOR", "BUTTE", "CALAVERAS", "COLUSA", "DEL NORTE", "EL DORADO", "GLENN",
+  "HUMBOLDT", "IMPERIAL", "INYO", "LAKE", "LASSEN", "MADERA", "MARIPOSA", "MENDOCINO", "MERCED", "MODOC",
+  "MONO", "MONTEREY", "NAPA", "NEVADA", "PLACER", "PLUMAS", "SAN BENITO", "SAN LUIS OBISPO", 
+  "SANTA BARBARA", "SHASTA", "SIERRA", "SISKIYOU", "SOLANO", "SONOMA", "SUTTER", "TEHAMA", "TRINITY",
+  "TULARE", "TUOLUMNE", "YOLO", "YUBA", "STANISLAUS", "KERN", "KINGS", "SANTA CRUZ")
+
+  retailers <- retailers %>%
+  mutate(rural= if_else(COUNTY %in% rural, 1, 0))
+
+#prepping for visualizations & joining to census data
+#creating ca_retailers
+ca_retails <- retailers %>%
+  group_by(COUNTY) %>%
+  summarize(N_RETAIL = n()) %>%
+  ungroup()
+
+#2. Census data + SNAP retailer data
+county_pop_url <- "https://www2.census.gov/programs-surveys/popest/datasets/2010-2019/counties/totals/co-est2019-alldata.csv"
+county_pop_raw <- read_csv(url(county_pop_url))
+ca_pop <- county_pop_raw %>%
+  filter(SUMLEV == "050") %>%
+  filter(STNAME == "California") %>%
+  select(
+    COUNTY = CTYNAME,
+    POPESTIMATE2019) %>%
+  mutate(COUNTY = toupper(COUNTY),
+         COUNTY = gsub("(.*)( COUNTY)", "\\1", COUNTY))
+
+#combined data with retailers and pop data
+combined_ca_data <- left_join(ca_retails, ca_pop, by = "COUNTY") %>%
+  mutate(retailers_per_100k = N_RETAIL / (POPESTIMATE2019/100000))
+
+#save retailers_per_100k as an object
+retailers_per_100k <- combined_ca_data %>%
+  mutate(retailers_per_100k = N_RETAIL / (POPESTIMATE2019/100000))
+
+#3. SNAP participant demographic counties
+snap_demos <- read_csv("particp_demog_counties.csv")
+tidy_demos <- snap_demos %>%
+  clean_names() %>%
+  rename(year = fileyear) %>%
+  mutate(COUNTY = toupper(county)) %>%
+  select(year, COUNTY, person, cases, female, male, black, hispanic, asian_pi, native_american_other_unknown, white) %>%
+  filter(COUNTY != "COUNTY TOTAL")
+## issue with this dataset is that it does not include # of cases by those demographics. it's only showing demographics for the county and how many cases there are.
+tidy_demos <- tidy_demos %>%
+    mutate(rate = cases/person)
+
+#4. Cal Fresh Data
+calfresh <- read_csv("calfresh.csv")
+tidy_calfresh <- calfresh %>%
+  janitor::clean_names() %>%
+  rename(COUNTY = county) %>%
+  mutate(COUNTY = toupper(COUNTY))
+
+#5. WIC vendors
+wic_vendors <- read_csv("vendor.csv")
+wic_tidy <- wic_vendors %>%
+  mutate(COUNTY = toupper(COUNTY))
+
+
+# WIC retailers data
+wic_retailers <- wic_tidy %>%
+  group_by(COUNTY) %>%
+  summarize(N_RETAIL = n()) %>%
+  ungroup()
+
+
+#6 WIC redemption 
+
+#by county
+wic_redemp_county <- read_csv("wic_county.csv") %>%
+  clean_names()
+
+#by particpant
+wic_redemp_particp <- read_csv("wic_participant.csv") %>%
+  clean_names() %>%
+  separate(year_month, c("year", "month")) %>%
+  rename(COUNTY = vendor_location) %>%
+  filter(COUNTY != "STATEWIDE ANNUAL") %>%
+  select(-statewide_infant_formula_rebate, -total_cost_vouchers, -total_cost_vouchers_adjusted, -average_cost_adjusted,    
+         -state_average_cost_adjusted) 
+
+wic_redemp_particp <- wic_redemp_particp %>%
+  mutate(across(starts_with("average"), ~gsub("\\$", "", .) %>% as.numeric)) %>%
+  mutate(month = as.numeric(month)) %>%
+  mutate(year = as.numeric(year))
+
+wic_part <- wic_redemp_particp %>%
+  group_by(year, COUNTY, participant_category)
+wic_part$number_of_participants_redeemed <- as.numeric(gsub("," , "", wic_part$number_of_participants_redeemed))
+wic_part$number_vouchers_redeemed <- as.numeric(gsub("," , "", wic_part$number_vouchers_redeemed))
+
+wic_binary <- wic_redemp_particp %>% 
+  mutate(urban = if_else(COUNTY %in% urban, 1, 0))
+
+```
+
+# Exploratory Data Analysis 
+
+**Average WIC Cost by Participant Analysis (Time Series 2010-2018)**
+
+WIC State agencies re-imburse retailers for foods that reflect rates charged by the vendor but up to State regulated thresholds. These prices charged by stores can affect the average State and County’s WIC food costs.  Since stores have to become authorized to sell WIC approved food, retailers have immense authority in pricing regulations and adding administrative costs to WIC approved foods. 
+
+
+This exploratory visualization graph supports previously conducted studies in the United States and specifically California on WIC average costs per participant. Average costs per participant throughout the years are “infant” and “breastfeeding mother”. The team hypothesizes that the target demographic of new mothers influences pricing. We assume demand is higher for infant-products like formula and other baby foods. The aforementioned structure of WIC vendors, as price setters could explain the immense discrepancy between “infant” average costs, “breastfeeding mother” average costs as vendors have autonomy to adjust prices to demand. 
+
+```{r WIC Average Cost Per Participant, warning=FALSE, echo=FALSE}
+
+wic_redemp_particp%>%
+  ggplot() +
+  geom_col(mapping = aes(participant_category, average_cost, fill = participant_category)) +
+  geom_text(
+    mapping = aes(participant_category, average_cost, label = average_cost, angle=90, hjust= -0.3),
+    stat = "identity",
+    parse = FALSE,
+    nudge_x = 0,
+    nudge_y = 0,
+    check_overlap = TRUE,
+    na.rm = FALSE,
+    show.legend = NA,
+    inherit.aes = TRUE
+    ) + 
+  facet_wrap(~year) +
+  labs(
+    title = "Average Cost by WIC Participant",
+    x = "Type of Participant",
+    y = "Average Cost per Participant (in $)"
+  ) +
+  theme(axis.text.x = element_blank(),
+        axis.ticks.x = element_blank(),
+        axis.text.y = element_blank(),
+        axis.ticks.y = element_blank())
+
+``` 
+
+**WIC Redemption Participation Rates by Type (Time Series 2010-2018)**
+
+Interestingly the average participation rate is at approximately 60% for children and at under 20% for all other participant categories. We suspect that because WIC does not expire but it does have a BRR or benefit reduction rate that kids in the program continue to benefit from WIC. The ratio of mother to child is also on average higher. 
+
+```{r WIC Participation Rates by Type, warning=FALSE, echo=FALSE, message=FALSE}
+wic_time_series <- read_csv("participant_rates.csv") %>%
+  pivot_longer(cols=c("2010", "2011", "2012", "2013", "2014", "2015", "2016", "2017", "2018"),
+               names_to = "year",
+               values_to = "rate")
+
+
+wic_time_series %>%
+  mutate(year = as.numeric(year)) %>%
+  ggplot(mapping = aes(x = year, y = rate, color = participant_category)) +
+  geom_line(alpha = 0.6, size = 1) +
+  labs(
+    title = "WIC Participation Rates by Type",
+    x = "Year",
+    y = "Rate")
+
+
+```
+
+**WIC Redemption Participation Rate per Average Cost**
+
+This graph analyzes rural and urban counties average costs per participant. Urban is created as a binary variable, hence the indication of 0s and 1s on the x-axis. In both urban and rural counties, infant has the most spread in participation per average costs. Urban counties generally had a longer range that reflected more outliers in average_costs. Rural counties have a higher concentration of costs with less outliers.
+
+
+```{r EDA WIC Redemption, warning=FALSE, message=FALSE, echo=FALSE, results='hide'}
+
+#Commenting out this code because it produces less visually intuitive plots than the same code for a different user. 
+#The graphs produced using this code are inserted later using include_graphics()
+
+# wic_redemp_particp %>%
+#   ggplot(mapping = aes(x=participant_category, y=average_cost, fill = participant_category)) +
+#   geom_violin() +
+#   xlab("class") +
+#   theme(legend.position = "none") +
+#   xlab("") +
+#   theme_minimal()
+# 
+# wic_binary %>%
+#   ggplot(mapping = aes(x=participant_category, y=average_cost, fill = participant_category)) +
+#   geom_violin() +
+#   facet_wrap(~urban) +
+#   xlab("class") +
+#   theme(legend.position = "none") +
+#   xlab("") +
+#   theme_minimal() +
+#   theme(axis.text.x = element_blank(),
+#         axis.ticks.x = element_blank()) +
+#   labs(
+#     title = "Average Cost by Participant, 0=Rural and 1=Urban",
+#     source = "California Open Data"
+#   )
+
+```
+
+**Statewide Average Costs by Participant Category**
+
+
+```{r violin graph statewide, warning=FALSE, message=FALSE, echo=FALSE}
+
+#inserting a better version of our graphs that printed differently for different users
+library(knitr)
+include_graphics("violin_statewide_costs.png")
+```
+
+
+
+**Average Cost by Participant, 0=Rural and 1=Urban**
+
+
+```{r violin graph rural urban, warning=FALSE, message=FALSE, echo=FALSE}
+
+#inserting a better version of our graphs that printed differently for different users
+library(knitr)
+include_graphics("violin_rural_urban.png")
+```
+
+
+# Geospatial Analyses 
+
+**SNAP Number of Retailers per 100,000 People by County 2019**
+
+Using exploratory and geospatial data analysis, the team was able to reproduce a geographically accurate map of California per county. It is clear that California has a wealth of SNAP retailers within the state. California’s population, demographics, socio-economic positioning, and the diverse landscape of employment and income provide an interesting picture of this means-tested federal program. The graph shows that rural counties in Northern California has the most retailers per 100k people.  The darkly shaded areas on the very west of California are major counties such as San Francisco, San Mateo, Contra Costa, Alameda, and Santa Clara. These major urban areas have less retailers per 100k. We hypothesize that (1) larger retailers are able to provide SNAP benefits and (2) these counties are quite small per square mile 
+
+Though the graph indicates that mostly rural areas have more retailers per 100k, the team is unsure how effective those stores are in providing SNAP benefits/ benefits that provide nutritious options for individuals and families. 
+
+
+```{r, geospatial, warning=FALSE, message=FALSE, echo=FALSE, results=FALSE}
+
+#Setup CA outline
+library(tigris)
+
+#creating ca_counties
+ca_counties_raw <- tigris::counties(
+  state = "CA",
+  cb = TRUE,
+  resolution = "500k",
+  year = 2020,
+  class = "sf")
+
+#getting geo outline of CA by county
+ca_counties_raw %>%
+  ggplot() +
+  geom_sf() +
+  theme_void() 
+  
+
+ca_counties <- ca_counties_raw %>%
+  dplyr::transmute(
+    GEOID,
+    MAP_NAME = NAME,
+    COUNTY = toupper(NAME)
+  )
+
+```
+
+```{r CA geospatial visualization, warning=FALSE, message=FALSE, echo=FALSE}
+
+#Create geospatial visualization - Retailers per 100k People
+ca_geospatial_data <- geo_join(
+  spatial_data = ca_counties,
+  data_frame = combined_ca_data,
+  by_sp = "COUNTY",
+  by_df = "COUNTY",
+  how = "left")
+ggplot(ca_geospatial_data, aes(fill = retailers_per_100k)) +
+  geom_sf() +
+  #scale_fill_viridis_c() +
+  labs(
+    title = "Number of Retailers per 100,000 People by County in 2019"
+  ) +
+  theme_void()
+
+```
+
+**SNAP Participation Rates by Age Range in 2019 & Time Series Graph (Elderly, Adult, and Child)**
+
+SNAP participation rates differ between three separate age groups. Specifically, looking at Imperial County, we can see that the elder rate for SNAP participation is more prominent than the other age range between 2014-2019. Counties that we would like to draw attention to are San Bernadino, Imperial County, and Tulare. We see higher rates across all three age ranges in the Central Valley, which is primarily where agricultural workers live. 
+
+Per the participation rate, the primary benefactors of this program are children. 
+
+
+```{r Cal fresh: child, adult, and elderly participation rates, warning=FALSE, message=FALSE, echo=FALSE}
+
+#Cal fresh geospatial analysis for child, adult, and elderly participation rates
+join_calfresh <- tidy_calfresh %>%
+  select(COUNTY, year, elderly, adults, children, esl, total_population_cy, total_elderly_60plus_cy, total_children_under_18_cy, total_esl_over_age_5_cy) %>%
+  na.omit()
+join_calfresh <- join_calfresh %>%
+  mutate(rate_elder = elderly/total_elderly_60plus_cy) %>%
+  mutate(rate_child = children/total_children_under_18_cy) %>%
+  mutate(rate_adult = adults/total_population_cy)
+calfresh_map <- geo_join(
+  spatial_data = ca_counties,
+  data_frame = join_calfresh,
+  by_sp = "COUNTY",
+  by_df = "COUNTY",
+  how = "inner")
+map_child <- ggplot(calfresh_map, aes(fill = rate_child)) +
+  geom_sf() +
+  scale_fill_viridis_c() +
+  theme_void()
+map_adult <- ggplot(calfresh_map, aes(fill = rate_adult)) +
+  geom_sf() +
+  scale_fill_viridis_c() +
+  theme_void()
+map_elder <- ggplot(calfresh_map, aes(fill = rate_elder)) +
+  geom_sf() +
+  scale_fill_viridis_c() +
+  theme_void()
+library(patchwork)
+map_child + map_adult + map_elder
+```
+
+```{r Cal fresh: child adult and elderly participation rates by year, warning=FALSE, echo=FALSE, message=FALSE}
+#cal fresh map by year
+calfresh_map %>%
+  ggplot(mapping = aes(fill = rate_child)) +
+  geom_sf() +
+  scale_fill_viridis_c() +
+  facet_wrap(~year) +
+  labs(title = "Child SNAP Participation Rate") +
+  theme(axis.text.x = element_blank(),
+        axis.ticks.x = element_blank())
+calfresh_map %>%
+  ggplot(mapping = aes(fill = rate_elder)) +
+  geom_sf() +
+  scale_fill_viridis_c() +
+  facet_wrap(~year) +
+  labs(title = "Elderly SNAP Participation Rate") +
+  theme(axis.text.x = element_blank(),
+        axis.ticks.x = element_blank())
+calfresh_map %>%
+  ggplot(mapping = aes(fill = rate_adult)) +
+  geom_sf() +
+  scale_fill_viridis_c() +
+  facet_wrap(~year) +
+  labs(title = "Adult SNAP Participation Rate") +
+  theme(axis.text.x = element_blank(),
+        axis.ticks.x = element_blank())
+```
+
+
+
+**Overall SNAP Participation Rate**
+
+Though there are many that are eligible for SNAP not many redeem their benefits. The SNAP redemption rate per county is quite low with a few outliers. However, most counties however around the 55% redemption rate. In the future, the team hopes to analyze why SNAP redemption rates are not at a higher level, what administrative burdens are stopping this, and what policy solutions could be provided to increase SNAP Participation rates. 
+
+
+```{r overall SNAP participation rate, warning=FALSE, message=FALSE, echo=FALSE}
+# SNAP Map
+snap_map <- geo_join(
+  spatial_data = ca_counties,
+  data_frame = tidy_demos,
+  by_sp = "COUNTY",
+  by_df = "COUNTY",
+  how = "inner")
+snap_map %>%
+  ggplot(mapping = aes(fill = rate)) +
+  geom_sf() +
+  scale_fill_viridis_c() +
+  facet_wrap(~year) +
+  labs(title = "SNAP Participation Rate") +
+  theme(axis.text.x = element_blank(),
+        axis.ticks.x = element_blank())
+
+```
+
+
+**WIC Retailers per 100,000 People by County**
+
+In comparison to SNAP there are less WIC retailers within California. However, similarly to SNAP, we see a congregation of WIC retailers in Northern rural counties. Urban counties like San Francisco and ones aforementioned in the SNAP analysis have less WIC retailers. We hypothesize that it could be for similar reasons/ restrictions listed above in regards to less SNAP retailers in popular urban areas in California. 
+
+
+
+```{r WIC retailers per 100K, warning=FALSE, message=FALSE, echo=FALSE}
+
+#WIC retailers per 100K
+wic_join <- left_join(wic_retailers, ca_pop, by = "COUNTY") %>%
+  mutate(retailers_per_100k = N_RETAIL / (POPESTIMATE2019/100000))
+library(tigris)
+wic_geo_data <- geo_join(
+  spatial_data = ca_counties,
+  data_frame = wic_join,
+  by_sp = "COUNTY",
+  by_df = "COUNTY",
+  how = "left")
+ggplot(wic_geo_data, aes(fill = retailers_per_100k)) +
+  geom_sf() +
+  #scale_fill_viridis_c() +
+  labs(
+    title = "WIC Retailers per 100k"
+  ) +
+  theme_void()
+```
+
+**Machine Learning with WIC- Linear Regression**
+
+Using the WIC data, the team looked to see if a model could predict the number of  WIC vouchers redeemed, average costs, and number of participants redeemed. We set up the resample across a 10-fold cross-validation to find the fold with the lowest Root Mean Square Error (RMSE). A low RMSE means that the predicted values are close to the real values. Across the folds, fold 7 has the lowest RMSE. 
+
+
+Below are our final predictions:
+
+# WIC Machine Learning
+```{r WIC ML, warning=FALSE, message=FALSE, echo=FALSE}
+
+library(tidymodels)
+library(rsample)
+library(parsnip)
+library(recipes)
+library(workflows)
+library(tune)
+library(yardstick)
+library(glmnet)
+
+#Data loading and cleaning
+wic_models <- read_csv("wic_participant.csv") %>%
+  janitor::clean_names() %>%
+  filter(vendor_location != "STATEWIDE ANNUAL") %>%
+  filter(vendor_location != "STATEWIDE") %>%
+select(-statewide_infant_formula_rebate, -total_cost_vouchers_adjusted, -average_cost_adjusted, 
+  -state_average_cost_adjusted, -total_cost_vouchers, -participant_category, -vendor_location) %>%
+separate(year_month, c("year", "month")) %>%
+  mutate(year = as.numeric(year)) %>%
+  mutate(month = as.numeric(month))
+
+wic_models$number_of_participants_redeemed <- as.numeric(gsub("," , "", 
+  wic_models$number_of_participants_redeemed))
+wic_models$number_vouchers_redeemed <- as.numeric(gsub("," , "", 
+  wic_models$number_vouchers_redeemed))
+wic_models$average_cost = as.numeric(gsub("\\$", "", wic_models$average_cost))
+
+
+#predict number of vouchers redeemed
+#----------------------------------------
+#linear regression
+
+#initial split
+set.seed(20211102)
+split <- initial_split(wic_models, prop = 0.7, strata = "number_vouchers_redeemed")
+wic_train <- training(split)
+wic_test <- testing(split)
+
+#recipe
+wic_rec <- recipe(number_vouchers_redeemed ~., data = wic_train) %>%
+  step_nzv(all_predictors()) %>%
+  step_normalize(all_predictors())
+
+# set up resampling using 10-fold cross validation
+set.seed(20211102)
+folds <- vfold_cv(data = wic_train, v = 10, repeats = 1)
+
+# create a linear regression model
+wic_mod <- linear_reg() %>%
+  set_engine("lm")
+
+# create a workflow 
+wic_wf <- workflow() %>%
+  add_recipe(wic_rec) %>%
+  add_model(wic_mod)
+
+# fit the model 
+wic_cv <- wic_wf %>%
+  fit_resamples(resamples = folds)
+
+# select the best model
+wic_best <- wic_cv %>%
+  select_best("rmse")
+
+# finalize the workflow
+wic_final <- finalize_workflow(
+  wic_wf,
+  parameters = wic_best
+)
+
+# fit to the training data and extract coefficients
+wic_coefs <- wic_final %>%
+  fit(data = wic_train) %>%
+  extract_fit_parsnip() %>%
+  vip::vi(lambda = wic_best$penalty)
+
+collect_metrics(wic_cv, summarize=TRUE)%>%
+  filter(.config == "Preprocessor1_Model1")
+
+#plot the RMSE across the 10 resamples
+collect_metrics(wic_cv, summarize = FALSE) %>%
+filter(.config == "Preprocessor1_Model1",
+       .metric == "rmse") %>%
+ggplot(aes(id, .estimate, group = .metric)) +
+geom_line() +
+geom_point() +
+scale_y_continuous() +
+labs(title = "Calculated RMSE Across the 10 Folds",
+y = "RMSE_hat") +
+theme_minimal()
+
+#fit to test data
+wic_final_model <- fit(wic_wf, data = wic_test)
+
+#make predictions
+final_predictions <- bind_cols(
+  wic_models,
+  predict(wic_final_model, wic_models,
+          type="numeric"))
+
+print(final_predictions)
+
+
+```
+
+# Cluster Analysis
+
+**Cluster Analysis: WIC** 
+
+Squares that are perfectly white tell us that there is no correlation between cost and year, nor cost and participation type. Indicating that costs and participation type is consistent across the years and that external factors do not impact this. Most importantly, it is telling that average cost is consistent across years. This could inform policy on WIC benefits, ensuring that benefits meet costs and the potential expansion of the program.  
+
+Number of participants and number of vouchers are perfectly positively correlated, indicating that there is not a difference across people in the number of vouchers that participants receive. We do see some slightly negative correlations between participation type, number of participants, and number of vouchers. The assumption is that as number of participants and number of vouchers increase, participant type would decrease. This could inform how food policy is targeted towards participants and how to alleviate potential administrative burdens for people redeeming vouchers. 
+
+```{r Convert WIC data to numeric dataframe, warning=FALSE, message=FALSE, error=FALSE, echo=FALSE}
+library(corrplot)
+
+#create numeric data for PCA analysis
+wic_numeric <- wic_part %>%
+  filter(COUNTY == "STATEWIDE") %>%
+  select(number_of_participants_redeemed, number_vouchers_redeemed, average_cost) %>%
+  mutate(part_type = case_when(
+    participant_category == "Breastfeeding Mother" ~ "1",
+    participant_category == "Child" ~ "2",
+    participant_category == "Infant" ~ "3",
+    participant_category == "Non-Breastfeeding Mother" ~ "4",
+    participant_category == "Prenatal" ~ "5"
+  )) %>%
+  ungroup() %>%
+  select(-participant_category, -COUNTY) %>%
+  mutate(part_type = as.numeric(part_type)) %>%
+  rename(n_vouchers = number_vouchers_redeemed) %>%
+  rename(n_part = number_of_participants_redeemed)
+
+correlation_plot <- cor(wic_numeric)
+# creates a correlation plot
+corrplot(correlation_plot, method = "shade")
+
+```
+
+```{r PCA Extraction and Column Binding, warning=FALSE, message=FALSE, echo=FALSE}
+
+wic_state <- wic_part %>%
+   filter(COUNTY == "STATEWIDE") %>%
+  select(number_of_participants_redeemed, number_vouchers_redeemed, average_cost) %>%
+  mutate(part_type = case_when(
+    participant_category == "Breastfeeding Mother" ~ "1",
+    participant_category == "Child" ~ "2",
+    participant_category == "Infant" ~ "3",
+    participant_category == "Non-Breastfeeding Mother" ~ "4",
+    participant_category == "Prenatal" ~ "5"
+  )) %>%
+  ungroup() %>%
+  mutate(part_type = as.numeric(part_type)) %>%
+  rename(n_vouchers = number_vouchers_redeemed) %>%
+  rename(n_part = number_of_participants_redeemed)
+wic_pca_numeric <- wic_state %>%
+  select_if(is.numeric)
+#run PCA
+pca_wic <- prcomp(wic_pca_numeric)
+#extract principle components
+wic_pcs <- pca_wic %>%
+  .$x %>%
+  as_tibble()
+#combine pcs to county and participant category
+wic_pcs <- bind_cols(
+  select(wic_state, COUNTY, participant_category),
+  wic_pcs
+)
+```
+
+**WIC PCA: Optimal Number of Clusters**
+
+The team used unsupervised machine learning to create an analytical measure that determined the optimal number of clusters for our analysis. We used three methods: silhouette, gap_stat and wss. Respectively, the optimal number of clusters was 2, 6, and 2. 
+
+Using a cluster k-means of 6, and PCA the team was able to plot both PC1 and PC2. This cluster analysis supports our previous findings that the categories are similar in terms of average_cost with the exception of a few outliers, specifically in urban areas. In rural areas, participant category had a wider range as supported by this WIC PCA.  
+
+
+```{r WIC cluster analysis, warning=FALSE, message=FALSE, echo=FALSE} 
+
+library(cluster)
+library(dendextend)
+library(factoextra)
+library(GGally)
+library(recipes)
+# create a recipe with no outcome variable and all predictors
+wic_pca_rec <- recipe(~., data = wic_numeric) %>%
+  # center and scale all predictors
+  step_center(all_predictors()) %>%
+  step_scale(all_predictors()) %>%
+  # run prep to prepare recipe
+  prep()
+# apply recipe to employment_rec
+wic_clust <- wic_pca_rec %>%
+  bake(new_data = NULL)
+# PCA ---------------------------------------------------------------------
+# create a correlation matrix on employment_clust
+cor(wic_clust)
+# conduct PCA on the employment_clust data
+principal_components <- prcomp(wic_clust)
+# obtain summary metrics
+summary(principal_components)
+# obtain loadings
+principal_components$rotation
+# obtain component values for each observation
+pca_data <- as_tibble(principal_components$x) %>%
+  select(PC1, PC2, PC3)
+
+# set a seed because the clusters are not deterministic
+set.seed(20200205)
+# total within sum of squares
+fviz_nbclust(wic_clust, FUN = kmeans, method = "wss")
+# total silhouette width
+fviz_nbclust(wic_clust, FUN = kmeans, method = "silhouette")
+# gap statistic
+fviz_nbclust(wic_clust, FUN = kmeans, method = "gap_stat")
+# run kmeans with the optimal number of clusters using the employment_clust data, set nstart = 100
+clust_kmeans <- kmeans(
+  wic_clust,
+  centers = 6,
+  nstart = 100
+)
+# examine the cluster means
+tidy(clust_kmeans)
+
+```
+
+```{r continuing with clusters, warning=FALSE, message=FALSE, echo=FALSE}
+
+#fit with 6 clusters
+wic_kmeans6 <- kmeans(
+  wic_pca_numeric,
+  centers = 6,
+  nstart = 100
+)
+bind_cols(
+  select(wic_state, COUNTY, participant_category),
+  cluster = wic_kmeans6$cluster
+) %>%
+  count(participant_category, cluster)
+
+wic_clusters <- bind_cols(
+  select(wic_state, COUNTY, participant_category),
+  select(wic_pcs, PC1, PC2, PC3, PC4, PC5),
+  cluster6 = wic_kmeans6$cluster)
+ggplot() +
+  geom_point(
+    data = wic_clusters,
+    mapping = aes(PC1, PC2, color = factor(cluster6)),
+    alpha = 0.5) +
+  labs(
+    title = "K-Means with K=6 and PCA") +
+  theme_minimal()
+
+```
+
+
+## Text Analysis - SNAP Store Locations
+
+The text analysis word jumble is extremely interesting and tells us the different combinations of words that make up the store locations for WIC across different counties in California. For example, we see Joes-Trader-Joe. 
+
+
+```{r SNAP Text Analysis, warning=FALSE, message=FALSE, echo=FALSE}
+
+library(tidytext)
+library(igraph)
+library(ggraph)
+
+#use retailers data that was cleaned earlier
+retailers_text <- retailers %>% 
+  filter(!is.na(store_name)) %>%
+  select(-zip4)
+
+#creating biagram
+bigram_snap <- retailers %>%
+  unnest_tokens(bigram, store_name, token = "ngrams", n = 2)
+
+#separating the bigram into two columns
+bigrams_separated <- bigram_snap %>%
+  separate(bigram, c("word1", "word2"), sep = " ")
+
+#filtering out rows without stopwords
+bigrams_filtered <- bigrams_separated %>%
+  filter(!word1 %in% stop_words$word & !word2 %in% stop_words$word)
+
+#counting number of appearances of each bigram and filtering the rows
+bigram_30 <- bigrams_filtered %>%
+  count(word1, word2, sort = TRUE) %>%
+  filter(n > 30) %>%
+  filter(!is.na(word1)) 
+
+# plot the bigrams that exist more than 30 times
+bigram_graph <- bigram_30 %>%
+  graph_from_data_frame()
+# plot the relationships
+set.seed(2017)
+ggraph(bigram_graph, layout = "fr") +
+  geom_edge_link() +
+  geom_node_point() +
+  geom_node_text(aes(label = name), vjust = 1, hjust = 1)
+# merging to a single column
+combined1 <- bigrams_filtered %>%
+  mutate(bigram = paste(word1,word2))
+
+#-------------------------
+#repeat geom_col for the 6 largest urban counties, 6 largest rural/suburban, and 6 smallest rural
+
+#create stopword vectors for city names that don't tell us anything about the name/type of store
+urb_city_names <- c("santa", "clara", "ana", "san", "jacinto", "monica", "los", "angeles", "pedro", "monte",
+                    "palma", "chula", "vista", "cajon", "quinta", "jose", "yucca", "huntington", "diego", "ysidro",
+                    "costa", "mesa", "lucerne", "grove")
+
+rural_city_names <- c("santa", "fe", "central", "wheeler")
+
+```
+
+**Largest Urban Counties**
+
+The facet wrap graphs tell us important store locations that are in the top 6 urban areas in California: Los Angeles, Orange County, Riverside, San Bernardino, San Diego, Santa Clara.
+
+In the largest urban counties, we see quite a few gas stations listed as the most common WIC vendors. To name a few gas stations, Rotten Robbie, Quik Stop, 7 Eleven, and United Oil are all in the top vendors for urban counties. We also found several convenience stores, like Mini Market in LA, in the top vendors. We find it interesting that, in urban areas, there is such a large prevalence of gas stations and convenience stores listed. We would have thought urban areas would have access to more traditional food stores and markets.  
+
+
+```{r 6 largest urban counties, warning=FALSE, echo=FALSE, message=FALSE}
+
+# filtering for the 6 largest urban counties
+tf_idf_urb <- combined1 %>%
+  filter(COUNTY == "LOS ANGELES" | COUNTY == "SAN DIEGO" | COUNTY == "ORANGE" | COUNTY == "RIVERSIDE" | COUNTY == "SAN BERNARDINO" | COUNTY == "SANTA CLARA") %>%
+  filter(!word1 %in% stop_words$word,
+         !word2 %in% stop_words$word,
+         !word1 %in% urb_city_names,
+         !word2 %in% urb_city_names,
+         !is.na(word1), !is.na(word2)) %>%
+  count(COUNTY, bigram) %>%
+  bind_tf_idf(bigram, COUNTY, n) %>%
+  #plotting the 10 most frequent
+  group_by(COUNTY) %>%
+  slice_max(order_by=tf_idf, n=10) %>%
+  mutate(bigram=reorder(bigram, tf_idf)) %>%
+  ggplot() +
+  geom_col(aes(tf_idf, bigram, fill=COUNTY)) +
+  facet_wrap(~COUNTY, scales="free")+
+  theme(axis.text.x = element_text(angle = 45, hjust=1)) +
+  guides(fill="none") 
+
+tf_idf_urb
+
+```
+
+
+**Largest Rural and Suburban Counties**
+
+This graph tells us the top locations in the largest rural and suburban counties. We see here that Fastrip Food, MD Liquor, and Save Liquors are stores that are popular for WIC and SNAP. This is particularly relevant for our policy, as it tells us the type of stores that offer these services. It is also worthy to note that liquor stores are highly popular for social services.
+
+Compared to the other counties in this section, Monterey stands out as it had a lot more variety in vendors, including small businesses like Esperanza Market and larger chains like the 7 Eleven (Chain 2367). 
+
+```{r 6 largest rural counties, warning=FALSE, echo=FALSE, message=FALSE}
+
+#filter for 6 largest rural counties
+tf_idf_rur_high <- combined1 %>%
+  filter(COUNTY == "KERN" | COUNTY == "STANISLAUS" | COUNTY == "SONOMA" | COUNTY == "TULARE" | COUNTY == "SOLANO" | COUNTY == "MONTEREY") %>% #chose not to use Santa Barbara because it did not feel reflective of rural
+   filter(!word1 %in% stop_words$word,
+         !word2 %in% stop_words$word,
+         !word1 %in% rural_city_names,
+         !word2 %in% rural_city_names,
+         !is.na(word1), !is.na(word2)) %>%
+  count(COUNTY, bigram) %>%
+  bind_tf_idf(bigram, COUNTY, n) %>%
+  # plotting the 5 most frequent store names
+  group_by(COUNTY) %>%
+  slice_max(order_by=tf_idf, n=5) %>%
+  mutate(bigram=reorder(bigram, tf_idf)) %>%
+  ggplot(aes(tf_idf, bigram, fill=COUNTY)) +
+  geom_col() +
+  facet_wrap(~COUNTY, scales="free")+
+  theme(axis.text.x = element_text(angle = 45, hjust=1)) +
+  guides(fill="none") +
+  scale_x_continuous()
+
+tf_idf_rur_high
+
+```
+
+
+**Smallest Rural Counties**
+
+Similarly, in smaller rural locations, Yosemite Liquor and gas stations seem to be popular store locations for WIC. This data could be useful in informing policy decisions about accessibility of social services and the kinds of stores that opt-in to participate in WIC. 
+
+It's also further interesting to note that there are also only a couple of these stores in three of the small counties selected, but are displayed as top locations in these counties. This may warrant further research on access to social services in rural California. 
+
+One county, Alpine, does not even appear in our analysis because it does not have enough vendors to meet our minimum threshold for bigrams, n=30. Additionally, we would like to do further analysis of Mariposa County because some of the top vendors are affiliated with Yosemite National Park, and therefore tourism could be misrepresenting the access to WIC vendors that local residents actually have if they do not live within close proximity to Yosemite. 
+
+
+```{r 6 smallest rural counties, warning=FALSE, echo=FALSE, message=FALSE }
+#filter for 6 smallest rural counties
+tf_idf_rur_low <- combined1 %>%
+  filter(COUNTY == "ALPINE" | COUNTY == "SIERRA" | COUNTY == "MODOC" | COUNTY == "AMADOR" | COUNTY == "MONO" | COUNTY == "MARIPOSA") %>%
+  filter(!word1 %in% stop_words$word) %>%
+  filter(!word2 %in% stop_words$word) %>%
+  count(COUNTY, bigram) %>%
+  bind_tf_idf(bigram, COUNTY, n) %>%
+  # plotting the 5 most frequent store names
+  group_by(COUNTY) %>%
+  slice_max(order_by=tf_idf, n=5) %>%
+  mutate(bigram=reorder(bigram, tf_idf)) %>%
+  ggplot(aes(tf_idf, bigram, fill=COUNTY)) +
+  geom_col() +
+  facet_wrap(~COUNTY, scales="free")+
+  theme(axis.text.x = element_text(angle = 45, hjust=1)) +
+  guides(fill="none")
+
+tf_idf_rur_low
+
+```
+
+**Conclusion**
+
+The team is excited about this data! We believe that understanding the nuances of the SNAP and WIC program can help inform policy in how to increase redemption rates and how to get nutritious food to people in need. The restrictions of our data set did limit us in understanding how demographics and labor statistics in CA impact redemption rates or how race impacts what types of SNAP or WIC retailers are available. We look forward to expanding research on this data. 
+
+
+
+
+
+
+
+
+
+
+
+
