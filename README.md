@@ -2,7 +2,7 @@ Final project
 Shelby, Imani, Maitreyi, Hannah
 5/13/2022
 
-[Github Pages](https://github.com/hill-hannah/final_project_hh_is_sl_mn.git)
+[Github Pages](https://hill-hannah.github.io/final_project_hh_is_sl_mn/)
 
 The libraries loaded in include:
 library(tidyverse)
